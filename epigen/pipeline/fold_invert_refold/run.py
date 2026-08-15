@@ -35,13 +35,21 @@ TM_SCORE_GATE = 0.5  # TMalign's own documented same-fold threshold.
 
 @dataclass
 class FoldedStructure:
-    """One ESMFold2 prediction plus its confidence-gate verdict."""
+    """One structure for `sequence`, plus its confidence-gate verdict.
+
+    `source`/`pdb_id` record where the structure came from -- ESMFold2 or a
+    real PDB entry via `structure_source.get_structure()` -- since a real
+    structure is strictly more trustworthy than a prediction and callers may
+    want to know which they got.
+    """
 
     sequence: str
     structure: Structure
     plddt: float
     avg_pae: float
     passed_confidence_gate: bool
+    source: str = "esmfold2"  # "esmfold2" | "pdb"
+    pdb_id: str | None = None
 
 
 def fold_sequence(
