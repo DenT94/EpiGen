@@ -113,7 +113,7 @@ def propose_compensatory_mutations(
     inp = InverseFoldingStructureInput(
         structure=folded.structure,
         chains_to_redesign=[chain_id],
-        fixed_positions=ResidueSelection({chain_id: fixed}) if fixed else None,
+        fixed_positions=ResidueSelection(chains={chain_id: fixed}) if fixed else None,
     )
     config = ProteinMPNNSampleConfig(
         num_sequences_per_structure=num_sequences,
