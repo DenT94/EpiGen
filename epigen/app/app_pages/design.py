@@ -200,7 +200,11 @@ def _render_results(result, inputs: dict) -> None:
                             )
                             color_map = feature_color_map(described.diff.compensated, feature_choice)
                             html = render_structure_html(tc.folded.structure, color_map, chain_id=chain_id)
-                            st.html(html, unsafe_allow_javascript=True)
+                            # st.html(..., unsafe_allow_javascript=True) silently drops py2Dmol's
+                            # ~100KB inline rendering script when it re-executes scripts client-side
+                            # (only the small ones survive) -- an iframe srcdoc via components.v1.html
+                            # has no such re-execution/size limit. See structure.py's `_render`.
+                            st.components.v1.html(html, height=480, scrolling=False)
                         else:
                             st.caption(
                                 "Structural coloring is only available for the top candidate "
@@ -245,10 +249,26 @@ with st.form("run_form"):
     with st.expander("MCMC / oracle settings", icon=":material/tune:"):
         num_starting_points = st.number_input("num_starting_points", min_value=1, value=2)
         chains_per_start = st.number_input("chains_per_start", min_value=1, value=2)
-        steps = st.number_input("steps per chain", min_value=10, value=200)
+        steps = st.number_input(
+            "steps per chain",
+            min_value=10,
+            value=50,
+            help="Each round dispatches ~2-3 Modal calls (ESM2/ProteinMPNN/Evo2), so this is "
+            "the main lever on total Modal round trips -- lower it if runs feel slow or "
+            "'connecting to container' logs are frequent. Was 200; the MCMC search gets "
+            "less time to converge at lower values.",
+        )
         temperature = st.number_input("temperature", min_value=0.01, value=1.0)
         candidate_num = st.number_input("candidate_num", min_value=1, value=5)
         seed = st.number_input("seed", value=0)
+        use_modal_mcmc = st.checkbox(
+            "Run MCMC search whole-loop on Modal",
+            value=False,
+            help="Runs the entire MCMC search inside a single Modal function (oracle/modal_app.py) "
+            "instead of one laptop<->Modal round trip per round -- fewer 'connecting to container' "
+            "reconnects, near-zero per-round latency. Requires "
+            "`modal deploy -e proto-env epigen/pipeline/oracle/modal_app.py` to have been run once.",
+        )
 
     submitted = st.form_submit_button("Run", icon=":material/play_arrow:", type="primary")
 
@@ -276,6 +296,7 @@ if submitted:
         temperature=float(temperature),
         candidate_num=int(candidate_num),
         seed=int(seed),
+        use_modal_mcmc=use_modal_mcmc,
     )
 
     with st.spinner("Running fold -> oracle/MCMC -> diffs (this calls Modal several times)..."):

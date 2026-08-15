@@ -33,7 +33,12 @@ def _diff_positions(reference: str, other: str, positions: list[int]) -> list[in
 
 def _render(structure, color_map: dict[int, str], chain_id: str, *, height: int = 480) -> None:
     html = render_structure_html(structure, color_map, chain_id=chain_id)
-    st.html(html, unsafe_allow_javascript=True)
+    # st.html(..., unsafe_allow_javascript=True) silently drops py2Dmol's ~100KB inline
+    # rendering script when it re-executes scripts client-side (only small scripts survive,
+    # so the control panel chrome renders but the actual WebGL viewer never populates -- an
+    # empty canvas). An iframe srcdoc via components.v1.html has no such limit; confirmed
+    # via a live DOM inspection (the big script tag was simply absent from the page).
+    st.components.v1.html(html, height=height, scrolling=False)
 
 
 def _legend(*, edit: bool = True, compensatory: bool = False) -> None:

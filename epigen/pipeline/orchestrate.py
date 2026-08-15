@@ -32,6 +32,7 @@ from epigen.pipeline.literature import AnnotationRange, flag_positions, get_anno
 from epigen.pipeline.oracle.codon import apply_aa_substitutions_to_nt, reverse_translate
 from epigen.pipeline.oracle.correlation import expert_agreement, fraction_below_wt
 from epigen.pipeline.oracle.mcmc import MCMCCandidate, run_mcmc_search
+from epigen.pipeline.oracle.modal_app import run_mcmc_search_on_modal
 from epigen.pipeline.oracle.scoring import position_scores_esm2, position_scores_proteinmpnn
 from epigen.pipeline.sae_diff.run import ThreeStateSAEDiff, diff_many_candidates
 
@@ -71,6 +72,7 @@ def run_end_to_end(
     use_evo2: bool = True,
     weight_evo2: float = 0.34,
     annotation_ranges: list[AnnotationRange] | None = None,
+    use_modal_mcmc: bool = False,
 ) -> EndToEndResult:
     """Run the full substitution-MVP loop and return everything needed to display it.
 
@@ -109,6 +111,15 @@ def run_end_to_end(
             Advisory only -- surfaced via `EndToEndResult.annotation_conflicts`,
             never blocks the run, since literature coverage is incomplete for
             most constructs.
+        use_modal_mcmc: Run the MCMC search inside `oracle.modal_app`'s
+            deployed whole-loop Modal function instead of orchestrating each
+            round from the laptop. Per-round esm2/proteinmpnn/evo2 calls
+            become container-to-container (near-zero latency, no repeated
+            client-side lookup/reconnect per round) instead of one laptop
+            round trip per round -- see that module's docstring. Requires
+            `modal deploy -e proto-env epigen/pipeline/oracle/modal_app.py`
+            to have been run already; falls through to the laptop-orchestrated
+            path's own errors if not deployed.
     """
     edit_positions = list(range(edit_start, edit_start + len(edit_sequence)))
     if set(edit_positions) & set(window_positions):
@@ -137,19 +148,43 @@ def run_end_to_end(
         wt_nt = wt_nt_sequence or reverse_translate(wt_sequence)
         edit_only_nt_sequence = apply_aa_substitutions_to_nt(wt_nt, edit_start, edit_sequence)
 
-    mcmc_candidates = run_mcmc_search(
-        edit_only,
-        window_positions,
-        chain_id=chain_id,
-        num_starting_points=num_starting_points,
-        chains_per_start=chains_per_start,
-        steps=steps,
-        temperature=temperature,
-        candidate_num=candidate_num,
-        seed=seed,
-        nt_sequence=edit_only_nt_sequence,
-        weight_evo2=weight_evo2,
-    )
+    if use_modal_mcmc:
+        raw_candidates = run_mcmc_search_on_modal(
+            edit_only,
+            window_positions,
+            chain_id=chain_id,
+            num_starting_points=num_starting_points,
+            chains_per_start=chains_per_start,
+            steps=steps,
+            temperature=temperature,
+            candidate_num=candidate_num,
+            seed=seed,
+            nt_sequence=edit_only_nt_sequence,
+            weight_evo2=weight_evo2,
+        )
+        mcmc_candidates = [
+            MCMCCandidate(
+                sequence=c["sequence"],
+                combined_score=c["combined_score"],
+                passed_structural_check=c["passed_structural_check"],
+                nt_sequence=c["nt_sequence"],
+            )
+            for c in raw_candidates
+        ]
+    else:
+        mcmc_candidates = run_mcmc_search(
+            edit_only,
+            window_positions,
+            chain_id=chain_id,
+            num_starting_points=num_starting_points,
+            chains_per_start=chains_per_start,
+            steps=steps,
+            temperature=temperature,
+            candidate_num=candidate_num,
+            seed=seed,
+            nt_sequence=edit_only_nt_sequence,
+            weight_evo2=weight_evo2,
+        )
 
     top_candidate: RefoldedCandidate | None = None
     contact_deltas: list[NeighborDelta] = []
