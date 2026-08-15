@@ -19,6 +19,10 @@ secrets.toml
 # Data & model artifacts (large / regenerable)
 data/*
 !data/.gitkeep
+
+# Paperclip literature-annotation cache (regenerable per accession)
+epigen/pipeline/literature/cache/*
+!epigen/pipeline/literature/cache/.gitkeep
 *.pdb
 *.cif
 *.pt
