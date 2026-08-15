@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from epigen.pipeline.literature import plot_annotation_map
 from epigen.pipeline.orchestrate import run_end_to_end
 
 st.set_page_config(page_title="EpiGen", layout="wide")
@@ -84,6 +85,25 @@ if submitted:
     )
     st.write(f"**Edit-only** (pos {edit_position}={edit_residue}): pLDDT={result.edit_only.plddt:.3f}")
 
+    st.subheader("Literature annotation map")
+    if result.annotation_ranges:
+        if result.annotation_conflicts:
+            st.warning(
+                f"Edit position or compensatory window overlaps {len(result.annotation_conflicts)} "
+                "known functional/structural annotation(s) -- see ⚠ rows below."
+            )
+        st.pyplot(
+            plot_annotation_map(
+                len(wt_sequence.strip()),
+                result.annotation_ranges,
+                edit_position=int(edit_position),
+                window_positions=window_positions,
+                conflicts=result.annotation_conflicts,
+            )
+        )
+    else:
+        st.caption("No Paperclip/UniProt annotations found for this sequence.")
+
     st.subheader("Oracle sanity checks")
     c1, c2 = st.columns(2)
     c1.metric("Expert correlation (ESM2 vs ProteinMPNN)", f"{result.expert_correlation:.3f}")
@@ -109,11 +129,55 @@ if submitted:
         st.subheader(f"Contact microenvironment deltas ({len(result.contact_deltas)} rows)")
         st.dataframe([vars(d) for d in result.contact_deltas], use_container_width=True)
 
-        if result.sae_diff is not None:
+        top_sae_diff = result.sae_diffs.get(tc.candidate.sequence)
+        if top_sae_diff is not None:
             st.subheader("SAE feature diff (compensated vs edit-only, top 20 by |delta|)")
             from epigen.pipeline.sae_diff.run import top_k_deltas
 
-            top_deltas = top_k_deltas(result.sae_diff.compensated_vs_edit, k=20)
+            top_deltas = top_k_deltas(top_sae_diff.compensated_vs_edit, k=20)
             st.dataframe([vars(d) for d in top_deltas], use_container_width=True)
+
+        if result.sae_diffs:
+            st.subheader(f"SAE feature space across candidates ({len(result.sae_diffs)} scored)")
+            from epigen.pipeline.sae_diff.describe import describe_candidate
+            from epigen.pipeline.sae_diff.pca import build_feature_matrix, pca_2d, select_top_features
+
+            candidate_sequences = list(result.sae_diffs.keys())
+            diffs = list(result.sae_diffs.values())
+            top_features_per_candidate = select_top_features(diffs, k=3)
+            _, matrix = build_feature_matrix(top_features_per_candidate)
+            coords = pca_2d(matrix)
+            pca_df = {
+                "PC1": coords[:, 0],
+                "PC2": coords[:, 1],
+                "sequence": [seq[:12] + "..." for seq in candidate_sequences],
+            }
+            st.caption("PCA of each candidate's top-3 ΔΔSAE (compensated vs WT) features, unioned across candidates.")
+            st.scatter_chart(pca_df, x="PC1", y="PC2")
+
+            st.caption(
+                "Describe a candidate's top SAE features with human-readable labels "
+                "(esmc_6b/layer60 -- heavier, on-demand only)."
+            )
+            describe_choice = st.selectbox("Candidate to describe", candidate_sequences, format_func=lambda s: s[:20] + "...")
+            if st.button("Describe"):
+                with st.spinner("Re-diffing at the describable SAE config (esmc_6b)..."):
+                    try:
+                        described = describe_candidate(wt_sequence.strip(), result.edit_only.sequence, describe_choice)
+                    except Exception as exc:
+                        st.exception(exc)
+                    else:
+                        st.dataframe(
+                            [
+                                {
+                                    "position": d.position,
+                                    "feature_index": d.feature_index,
+                                    "delta": d.delta,
+                                    **described.descriptions.get(d.feature_index, {}),
+                                }
+                                for d in described.top_deltas
+                            ],
+                            use_container_width=True,
+                        )
 else:
     st.info("Fill in the form and click Run.")

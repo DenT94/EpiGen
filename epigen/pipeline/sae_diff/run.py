@@ -40,10 +40,28 @@ def get_feature_vector(
     k: int = 64,
     codebook_size: int = 16384,
 ) -> FeatureVector:
-    """Fetch one sequence's active SAE features at a single layer.
+    """Fetch one sequence's active SAE features at a single layer (one Modal call).
 
     `layer=None` uses Biohub's published ~75%-depth sweep layer for the
     chosen checkpoint (see `ESMCSAEFeaturesConfig.resolved_layers`).
+    """
+    return get_feature_vectors_batch([sequence], model_checkpoint=model_checkpoint, layer=layer, k=k, codebook_size=codebook_size)[0]
+
+
+def get_feature_vectors_batch(
+    sequences: list[str],
+    *,
+    model_checkpoint: str = "esmc_300m",
+    layer: int | None = None,
+    k: int = 64,
+    codebook_size: int = 16384,
+) -> list[FeatureVector]:
+    """Fetch active SAE features for every sequence, in one Modal call.
+
+    `run_esmc_sae_features`'s `sequences` field is already list-typed
+    (`iterable_input_fields=["sequences"]`), so N sequences cost one call
+    here instead of N -- this is what makes `diff_many_candidates` cheap
+    regardless of how many MCMC candidates there are.
     """
     config = ESMCSAEFeaturesConfig(
         device=DEVICE,
@@ -52,14 +70,19 @@ def get_feature_vector(
         k=k,
         codebook_size=codebook_size,
     )
-    output = run_esmc_sae_features(ESMCSAEFeaturesInput(sequences=[sequence]), config)
-    layer_features = output.results[0].layers[0]
-    return {
-        position: dict(zip(indices, magnitudes, strict=True))
-        for position, (indices, magnitudes) in enumerate(
-            zip(layer_features.feature_indices, layer_features.feature_magnitudes, strict=True), start=1
+    output = run_esmc_sae_features(ESMCSAEFeaturesInput(sequences=sequences), config)
+    vectors = []
+    for result in output.results:
+        layer_features = result.layers[0]
+        vectors.append(
+            {
+                position: dict(zip(indices, magnitudes, strict=True))
+                for position, (indices, magnitudes) in enumerate(
+                    zip(layer_features.feature_indices, layer_features.feature_magnitudes, strict=True), start=1
+                )
+            }
         )
-    }
+    return vectors
 
 
 @dataclass(frozen=True)
@@ -165,6 +188,47 @@ def diff_three_states(
         compensated_vs_edit=diff_feature_vectors(edit_only, compensated),
         compensated_vs_original=diff_feature_vectors(original, compensated),
     )
+
+
+def diff_many_candidates(
+    original_sequence: str,
+    edit_only_sequence: str,
+    candidate_sequences: list[str],
+    *,
+    model_checkpoint: str = "esmc_300m",
+    layer: int | None = None,
+    position_map: PositionMap = identity_map(),
+) -> list[ThreeStateSAEDiff]:
+    """SAE-diff every candidate against the same original/edit-only pair.
+
+    `original`/`edit_only` are fetched once (2 Modal calls, shared across
+    every candidate) and every candidate's compensated state is fetched in
+    a single batched call (`get_feature_vectors_batch`) -- so scoring
+    `len(candidate_sequences)` candidates costs 3 Modal calls total, not
+    `3 * len(candidate_sequences)`. This is what makes it practical to
+    SAE-diff every MCMC candidate (per mypipelinethoughts.md step 5) rather
+    than just the winner.
+    """
+    original = get_feature_vector(original_sequence, model_checkpoint=model_checkpoint, layer=layer)
+    edit_only_raw = get_feature_vector(edit_only_sequence, model_checkpoint=model_checkpoint, layer=layer)
+    edit_only = reindex_to_wt(edit_only_raw, position_map)
+
+    compensated_raw_batch = get_feature_vectors_batch(candidate_sequences, model_checkpoint=model_checkpoint, layer=layer)
+
+    diffs = []
+    for compensated_raw in compensated_raw_batch:
+        compensated = reindex_to_wt(compensated_raw, position_map)
+        diffs.append(
+            ThreeStateSAEDiff(
+                original=original,
+                edit_only=edit_only,
+                compensated=compensated,
+                edit_vs_original=diff_feature_vectors(original, edit_only),
+                compensated_vs_edit=diff_feature_vectors(edit_only, compensated),
+                compensated_vs_original=diff_feature_vectors(original, compensated),
+            )
+        )
+    return diffs
 
 
 def describe_top_features(deltas: list[FeatureDelta], *, model_checkpoint: str, layer: int, k: int, codebook_size: int):

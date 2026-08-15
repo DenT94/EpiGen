@@ -27,7 +27,7 @@ from epigen.pipeline.oracle.codon import apply_aa_substitution_to_nt, reverse_tr
 from epigen.pipeline.oracle.correlation import expert_agreement, fraction_below_wt
 from epigen.pipeline.oracle.mcmc import MCMCCandidate, run_mcmc_search
 from epigen.pipeline.oracle.scoring import position_scores_esm2, position_scores_proteinmpnn
-from epigen.pipeline.sae_diff.run import ThreeStateSAEDiff, diff_three_states
+from epigen.pipeline.sae_diff.run import ThreeStateSAEDiff, diff_many_candidates
 
 
 @dataclass
@@ -41,7 +41,7 @@ class EndToEndResult:
     mcmc_candidates: list[MCMCCandidate]  # top candidate_num compensatory sequences, by combined score
     top_candidate: RefoldedCandidate | None  # the winning candidate, refolded + TM-gated
     contact_deltas: list[NeighborDelta]  # edit_only vs top_candidate, every changed position
-    sae_diff: ThreeStateSAEDiff | None  # original / edit_only / top_candidate, pairwise
+    sae_diffs: dict[str, ThreeStateSAEDiff]  # keyed by candidate sequence, one entry per mcmc_candidates
     annotation_ranges: list[AnnotationRange]  # all known functional/structural ranges (literature.get_annotations)
     annotation_conflicts: list[AnnotationRange]  # subset overlapping edit_position or window_positions
 
@@ -139,16 +139,23 @@ def run_end_to_end(
 
     top_candidate: RefoldedCandidate | None = None
     contact_deltas: list[NeighborDelta] = []
-    sae_result: ThreeStateSAEDiff | None = None
+    sae_diffs: dict[str, ThreeStateSAEDiff] = {}
     if mcmc_candidates:
         pseudo = [CompensatoryCandidate(sequence=mcmc_candidates[0].sequence, perplexity=0.0, sequence_recovery=0.0)]
         top_candidate = refold_and_gate(pseudo, edit_only, seed=seed)[0]
         contact_deltas = diff_all_changed_positions(
             edit_only, top_candidate.folded, chain_id=chain_id, position_map=identity_map()
         )
-        sae_result = diff_three_states(
-            wt_sequence, edit_only_sequence, top_candidate.candidate.sequence, position_map=identity_map()
+        # Broad pass over every candidate (not just the winner), batched into 3 Modal
+        # calls total regardless of candidate count -- see diff_many_candidates' docstring.
+        # Needed for the cross-candidate PCA scatter, not just the single top_candidate diff.
+        candidate_diffs = diff_many_candidates(
+            wt_sequence,
+            edit_only_sequence,
+            [c.sequence for c in mcmc_candidates],
+            position_map=identity_map(),
         )
+        sae_diffs = {c.sequence: diff for c, diff in zip(mcmc_candidates, candidate_diffs, strict=True)}
 
     return EndToEndResult(
         original=original,
@@ -158,7 +165,7 @@ def run_end_to_end(
         mcmc_candidates=mcmc_candidates,
         top_candidate=top_candidate,
         contact_deltas=contact_deltas,
-        sae_diff=sae_result,
+        sae_diffs=sae_diffs,
         annotation_ranges=annotation_ranges,
         annotation_conflicts=annotation_conflicts,
     )
