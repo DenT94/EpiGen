@@ -31,6 +31,9 @@ data/*
 # Jupyter
 .ipynb_checkpoints/
 
+# proto-tools deploy logs
+logs/
+
 # OS
 .DS_Store
 
