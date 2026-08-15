@@ -9,6 +9,7 @@
   - `esmfold2` — all-atom structure prediction (stage 1 fold/refold)
   - `esmc` — embeddings + SAE features (`esmc-sae-features` reuses this same
     deployed app, just a different `operation` in the dispatch payload)
+  - `esm2` — sequence log-likelihood scoring (oracle stage's ESM2 expert)
 
   Decision: ESMFold2/ESMC/ESMC-SAE run through proto-tools+Modal like
   everything else, not the hosted Biohub API — see CLAUDE.md's Stack
