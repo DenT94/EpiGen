@@ -129,15 +129,18 @@ def run_mcmc_search(
     refold_every: int | None = None,
     candidate_num: int = 10,
     seed: int | None = None,
+    esm2_scores: PositionScores | None = None,
+    pmpnn_scores: PositionScores | None = None,
 ) -> list[MCMCCandidate]:
     """Run `num_starting_points * chains_per_start` MCMC chains and return the top
     `candidate_num` unique sequences by combined score.
 
     `esm2_scores`/`pmpnn_scores` are computed once from `folded` (two Modal
-    calls total) and reused by every chain. Starting points are `folded`'s
-    own sequence plus `num_starting_points - 1` diverse warm starts sampled
-    via stage 1's `propose_compensatory_mutations` (reused, not
-    reimplemented).
+    calls total) and reused by every chain -- pass them in directly if a
+    caller already has them (e.g. for the expert-agreement sanity check)
+    to avoid recomputing. Starting points are `folded`'s own sequence plus
+    `num_starting_points - 1` diverse warm starts sampled via stage 1's
+    `propose_compensatory_mutations` (reused, not reimplemented).
 
     `refold_every` doesn't gate individual MCMC steps (that would defeat the
     point of a Modal-call-free search) -- instead it's applied once, as a
@@ -146,10 +149,13 @@ def run_mcmc_search(
     only ones that pass are kept. `passed_structural_check` is `None` when
     this step is skipped.
     """
-    from epigen.pipeline.oracle.scoring import position_scores_esm2, position_scores_proteinmpnn
+    if esm2_scores is None or pmpnn_scores is None:
+        from epigen.pipeline.oracle.scoring import position_scores_esm2, position_scores_proteinmpnn
 
-    esm2_scores = position_scores_esm2(folded.sequence)
-    pmpnn_scores = position_scores_proteinmpnn(folded.structure, folded.sequence)
+        esm2_scores = esm2_scores if esm2_scores is not None else position_scores_esm2(folded.sequence)
+        pmpnn_scores = (
+            pmpnn_scores if pmpnn_scores is not None else position_scores_proteinmpnn(folded.structure, folded.sequence)
+        )
 
     starting_sequences = [folded.sequence]
     if num_starting_points > 1:
