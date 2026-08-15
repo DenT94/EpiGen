@@ -45,8 +45,14 @@ with st.form("run_form"):
             "(e.g. 'WHSPRAL') replaces that many consecutive residues.",
         )
     with col2:
-        window_start = st.number_input("Compensatory window start", min_value=1, value=2)
-        window_end = st.number_input("Compensatory window end", min_value=1, value=10)
+        use_full_window = st.checkbox(
+            "Compensatory window = entire protein (excluding the edit)",
+            value=True,
+            help="MCMC's per-round cost doesn't scale with window size (still one proposal "
+            "per chain per round), so the whole protein is a reasonable default.",
+        )
+        window_start = st.number_input("Compensatory window start", min_value=1, value=2, disabled=use_full_window)
+        window_end = st.number_input("Compensatory window end", min_value=1, value=10, disabled=use_full_window)
 
     with st.expander("MCMC / oracle settings"):
         num_starting_points = st.number_input("num_starting_points", min_value=1, value=2)
@@ -61,7 +67,10 @@ with st.form("run_form"):
 if submitted:
     edit_sequence_clean = edit_sequence.strip().upper()
     edit_positions = list(range(int(edit_start), int(edit_start) + len(edit_sequence_clean)))
-    window_positions = list(range(int(window_start), int(window_end) + 1))
+    if use_full_window:
+        window_positions = [p for p in range(1, len(wt_sequence.strip()) + 1) if p not in edit_positions]
+    else:
+        window_positions = list(range(int(window_start), int(window_end) + 1))
     if set(edit_positions) & set(window_positions):
         st.error("Edit positions must not overlap the compensatory window.")
         st.stop()
@@ -104,7 +113,7 @@ if submitted:
             plot_annotation_map(
                 len(wt_sequence.strip()),
                 result.annotation_ranges,
-                edit_position=int(edit_start),  # marks the edit's start only; plot_annotation_map doesn't take a range yet
+                edit_position=(edit_positions[0], edit_positions[-1]),
                 window_positions=window_positions,
                 conflicts=result.annotation_conflicts,
             )

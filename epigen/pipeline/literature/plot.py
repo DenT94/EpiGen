@@ -28,13 +28,15 @@ def plot_annotation_map(
     sequence_length: int,
     ranges: list[AnnotationRange],
     *,
-    edit_position: int | None = None,
+    edit_position: int | tuple[int, int] | None = None,
     window_positions: list[int] | None = None,
     conflicts: list[AnnotationRange] | None = None,
     construct_label: str = "construct",
 ) -> Figure:
     """One row per `ranges` entry (sorted by start), colored functional/structural,
-    with a full-length backbone bar on top. `edit_position` draws a vertical marker;
+    with a full-length backbone bar on top. `edit_position` is a single 1-indexed
+    position (a plain vertical marker) or a `(start, end)` tuple for a multi-residue
+    edit (shaded like `window_positions`, since a dashed line can't represent a span);
     `window_positions` shades the compensatory search window; `conflicts` (a subset of
     `ranges`, e.g. `orchestrate.EndToEndResult.annotation_conflicts`) get a bold outline.
     """
@@ -74,7 +76,15 @@ def plot_annotation_map(
             (w_lo + w_hi) / 2, backbone_y + 0.85, "compensatory window",
             ha="center", va="bottom", fontsize=7.5, color=WINDOW_COLOR, style="italic",
         )
-    if edit_position is not None:
+    if isinstance(edit_position, tuple):
+        e_lo, e_hi = edit_position
+        if e_lo == e_hi:
+            ax.axvline(e_lo, color=EDIT_COLOR, lw=1.4, ls="--", zorder=4)
+        else:
+            ax.axvspan(e_lo - 0.5, e_hi + 0.5, color=EDIT_COLOR, alpha=0.22, zorder=2, lw=0)
+        ax.text((e_lo + e_hi) / 2, backbone_y + 0.5, "edit", ha="center", va="bottom",
+                fontsize=7.5, color=EDIT_COLOR, fontweight="bold")
+    elif edit_position is not None:
         ax.axvline(edit_position, color=EDIT_COLOR, lw=1.4, ls="--", zorder=4)
         ax.text(edit_position, backbone_y + 0.5, "edit", ha="center", va="bottom",
                 fontsize=7.5, color=EDIT_COLOR, fontweight="bold")
