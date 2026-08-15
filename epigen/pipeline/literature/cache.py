@@ -39,6 +39,9 @@ def load(accession: str) -> dict[str, Any] | None:
         return None
 
 
-def save(accession: str, *, sequence: str, features: list[dict[str, str]]) -> None:
+def save(
+    accession: str, *, sequence: str, features: list[dict[str, str]], metadata: dict[str, str] | None = None
+) -> None:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    _cache_path(accession).write_text(json.dumps({"sequence": sequence, "features": features}, indent=2))
+    payload = {"sequence": sequence, "features": features, "metadata": metadata or {}}
+    _cache_path(accession).write_text(json.dumps(payload, indent=2))

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from epigen.pipeline.literature import plot_annotation_map
+from epigen.pipeline.literature import attach_papers, get_accession_metadata, plot_annotation_map
 from epigen.pipeline.orchestrate import run_end_to_end
 
 st.set_page_config(page_title="EpiGen", layout="wide")
@@ -101,6 +101,26 @@ if submitted:
                 conflicts=result.annotation_conflicts,
             )
         )
+        functional_ranges = [r for r in result.annotation_ranges if r.kind == "functional"]
+        if functional_ranges:
+            st.caption(
+                "Best-effort supporting literature for the functional annotations above "
+                "(Paperclip full-text search, not verified citations)."
+            )
+            if st.button("Find supporting papers"):
+                with st.spinner("Searching Paperclip for supporting literature..."):
+                    metadata = get_accession_metadata(wt_sequence.strip(), pdb_id=pdb_id.strip() or None)
+                    annotated = attach_papers(functional_ranges, metadata) if metadata else None
+                if metadata is None:
+                    st.warning("Could not resolve a UniProt accession for this sequence; skipping paper search.")
+                else:
+                    for r in annotated:
+                        with st.container(border=True):
+                            st.write(f"**{r.label}** (residues {r.start}-{r.end})")
+                            if not r.papers:
+                                st.caption("No matching papers found.")
+                            for p in r.papers:
+                                st.markdown(f"- [{p.title}]({p.url}) — {p.authors} ({p.source}, {p.date})")
     else:
         st.caption("No Paperclip/UniProt annotations found for this sequence.")
 

@@ -7,7 +7,24 @@ can steer the insertion/edit window away from them.
 
 from __future__ import annotations
 
-from epigen.pipeline.literature.annotations import AnnotationRange, flag_positions, get_annotations
+from epigen.pipeline.literature.annotations import (
+    AccessionMetadata,
+    AnnotationRange,
+    PaperReference,
+    flag_positions,
+    get_accession_metadata,
+    get_annotations,
+)
+from epigen.pipeline.literature.papers import attach_papers
 from epigen.pipeline.literature.plot import plot_annotation_map
 
-__all__ = ["AnnotationRange", "flag_positions", "get_annotations", "plot_annotation_map"]
+__all__ = [
+    "AccessionMetadata",
+    "AnnotationRange",
+    "PaperReference",
+    "attach_papers",
+    "flag_positions",
+    "get_accession_metadata",
+    "get_annotations",
+    "plot_annotation_map",
+]

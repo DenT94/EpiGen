@@ -26,7 +26,7 @@ highly conserved query.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from epigen.pipeline.literature import cache
@@ -57,6 +57,30 @@ STRUCTURAL_FEATURE_TYPES = {"Helix", "Beta strand", "Turn", "Coiled coil"}
 
 
 @dataclass(frozen=True)
+class PaperReference:
+    """One candidate supporting paper for an annotation, from a Paperclip search --
+    best-effort provenance (see `literature.papers`), not a verified citation."""
+
+    title: str
+    authors: str
+    doc_id: str  # e.g. PMC11783178
+    source: str  # e.g. PMC
+    date: str
+    url: str
+
+
+@dataclass(frozen=True)
+class AccessionMetadata:
+    """UniProt identity of the accession an input sequence was resolved to -- enough
+    to build a literature search query (see `literature.papers.attach_papers`)."""
+
+    accession: str
+    protein_name: str
+    gene_name: str
+    organism_common: str
+
+
+@dataclass(frozen=True)
 class AnnotationRange:
     """One annotated residue range, in the *input construct's* 1-indexed numbering."""
 
@@ -64,13 +88,21 @@ class AnnotationRange:
     start: int
     end: int
     kind: Kind
+    feature_type: str  # raw UniProt feature_type (e.g. "Active site"), for query-building
+    papers: list[PaperReference] = field(default_factory=list)  # filled in by literature.papers.attach_papers
 
 
 def _escape_sql_literal(value: str) -> str:
     return value.replace("'", "''")
 
 
-def _resolve_accession(sequence: str, pdb_id: str | None) -> str | None:
+def resolve_accession(sequence: str, pdb_id: str | None = None) -> str | None:
+    """UniProt accession for `sequence` -- `pdb_id`'s cross-reference if given, else a
+    substring search over UniProt sequences. `None` if neither resolves. Exposed
+    publicly (not just used internally by `get_annotations`) so a caller like
+    `literature.papers.attach_papers` can get the same accession without a second,
+    possibly-divergent resolution.
+    """
     if pdb_id is not None:
         rows = run_protein_sql(
             "SELECT DISTINCT uniprot_accession FROM pdb_v.polymer_entities "
@@ -94,10 +126,10 @@ def _resolve_accession(sequence: str, pdb_id: str | None) -> str | None:
     return accession
 
 
-def _fetch_accession_data(accession: str) -> tuple[str, list[dict[str, str]]]:
+def _fetch_accession_data(accession: str) -> tuple[str, list[dict[str, str]], dict[str, str]]:
     cached = cache.load(accession)
     if cached is not None:
-        return cached["sequence"], cached["features"]
+        return cached["sequence"], cached["features"], cached.get("metadata", {})
 
     seq_rows = run_protein_sql(f"SELECT sequence FROM uniprot_v.protein_sequences WHERE accession = '{accession}'")
     if not seq_rows:
@@ -108,8 +140,38 @@ def _fetch_accession_data(accession: str) -> tuple[str, list[dict[str, str]]]:
         "SELECT feature_type, start_pos, end_pos, description FROM uniprot_v.features "
         f"WHERE accession = '{accession}' ORDER BY start_pos"
     )
-    cache.save(accession, sequence=uniprot_sequence, features=features)
-    return uniprot_sequence, features
+
+    protein_rows = run_protein_sql(
+        f"SELECT protein_name, gene_name, organism_common FROM uniprot_v.proteins WHERE accession = '{accession}'"
+    )
+    metadata = protein_rows[0] if protein_rows else {}
+
+    cache.save(accession, sequence=uniprot_sequence, features=features, metadata=metadata)
+    return uniprot_sequence, features, metadata
+
+
+def get_accession_metadata(sequence: str, *, pdb_id: str | None = None) -> AccessionMetadata | None:
+    """UniProt identity (name/gene/organism) for `sequence`'s resolved accession, or
+    `None` if it can't be resolved. Separate from `get_annotations` so a caller only
+    pays for this (one extra cached SQL row) when it actually wants to build a
+    literature search query, e.g. via `literature.papers.attach_papers`.
+    """
+    accession = resolve_accession(sequence, pdb_id)
+    if accession is None:
+        return None
+    try:
+        _, _, metadata = _fetch_accession_data(accession)
+    except PaperclipError as exc:
+        logger.warning(f"Paperclip lookup failed; no accession metadata: {exc}")
+        return None
+    if not metadata:
+        return None
+    return AccessionMetadata(
+        accession=accession,
+        protein_name=metadata.get("protein_name", ""),
+        gene_name=metadata.get("gene_name", ""),
+        organism_common=metadata.get("organism_common", ""),
+    )
 
 
 def _label(feature_type: str, description: str, start: int, end: int) -> str:
@@ -128,10 +190,10 @@ def get_annotations(sequence: str, *, pdb_id: str | None = None) -> list[Annotat
     so a miss should degrade gracefully rather than break the pipeline.
     """
     try:
-        accession = _resolve_accession(sequence, pdb_id)
+        accession = resolve_accession(sequence, pdb_id)
         if accession is None:
             return []
-        uniprot_sequence, raw_features = _fetch_accession_data(accession)
+        uniprot_sequence, raw_features, _ = _fetch_accession_data(accession)
     except PaperclipError as exc:
         logger.warning(f"Paperclip lookup failed; returning no annotations: {exc}")
         return []
@@ -157,7 +219,12 @@ def get_annotations(sequence: str, *, pdb_id: str | None = None) -> list[Annotat
         end = int(row["end_pos"]) - offset
         if start < 1 or end > len(sequence):
             continue  # outside the construct (e.g. a signal-peptide-region feature)
-        ranges.append(AnnotationRange(label=_label(feature_type, row["description"], start, end), start=start, end=end, kind=kind))
+        ranges.append(
+            AnnotationRange(
+                label=_label(feature_type, row["description"], start, end),
+                start=start, end=end, kind=kind, feature_type=feature_type,
+            )
+        )
 
     return sorted(ranges, key=lambda r: (r.start, r.end))
 
