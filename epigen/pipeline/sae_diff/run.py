@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from proto_tools import ESMCSAEFeaturesConfig, ESMCSAEFeaturesInput, run_esmc_sae_features
 from proto_tools.tools.masked_models.esmc.helpers import describe_sae_features
 
+from epigen.pipeline.alignment import PositionMap, identity_map
+
 DEVICE = "modal"
 
 # The only SAE configuration with published human-readable feature descriptions.
@@ -71,8 +73,30 @@ class FeatureDelta:
     delta: float  # magnitude_b - magnitude_a
 
 
+def reindex_to_wt(vector: FeatureVector, position_map: PositionMap) -> FeatureVector:
+    """Reindex a candidate-sequence feature vector into WT-native position numbering.
+
+    Positions inside an inserted span (no WT counterpart) are dropped -- this
+    is the literal implementation of "if insertion, SAE diff is computed by
+    ignoring the edit sequence" (mypipelinethoughts.md step 5): the inserted
+    motif's own residues never enter the diff, only the flanking scaffold
+    positions do, correctly realigned.
+    """
+    reindexed: FeatureVector = {}
+    for cand_pos, features in vector.items():
+        wt_pos = position_map.to_wt(cand_pos)
+        if wt_pos is not None:
+            reindexed[wt_pos] = features
+    return reindexed
+
+
 def diff_feature_vectors(vector_a: FeatureVector, vector_b: FeatureVector) -> list[FeatureDelta]:
-    """Per-(position, feature) deltas between two feature vectors, magnitude_b - magnitude_a."""
+    """Per-(position, feature) deltas between two feature vectors, magnitude_b - magnitude_a.
+
+    Both vectors must already share the same position space (e.g. both
+    WT-native -- see `reindex_to_wt` for candidate-sequence vectors that
+    aren't).
+    """
     positions = sorted(set(vector_a) | set(vector_b))
     deltas: list[FeatureDelta] = []
     for pos in positions:
@@ -113,6 +137,7 @@ def diff_three_states(
     *,
     model_checkpoint: str = "esmc_300m",
     layer: int | None = None,
+    position_map: PositionMap = identity_map(),
 ) -> ThreeStateSAEDiff:
     """Fetch SAE features for all three states and diff them pairwise.
 
@@ -120,10 +145,18 @@ def diff_three_states(
     compensatory mutation; "compensated" adds the candidate compensatory
     mutation on top. `compensated_vs_edit` is usually the most direct read on
     whether the mutation rescues what the insertion disrupted.
+
+    `position_map` maps edit-only/compensated positions back to
+    `original_sequence`'s (WT) numbering -- pass `identity_map()` (default)
+    for substitution-only edits, or `insertion_map(...)` when
+    edit_only/compensated are longer than `original_sequence`. Positions
+    inside the inserted span are excluded from every diff.
     """
     original = get_feature_vector(original_sequence, model_checkpoint=model_checkpoint, layer=layer)
-    edit_only = get_feature_vector(edit_only_sequence, model_checkpoint=model_checkpoint, layer=layer)
-    compensated = get_feature_vector(compensated_sequence, model_checkpoint=model_checkpoint, layer=layer)
+    edit_only_raw = get_feature_vector(edit_only_sequence, model_checkpoint=model_checkpoint, layer=layer)
+    compensated_raw = get_feature_vector(compensated_sequence, model_checkpoint=model_checkpoint, layer=layer)
+    edit_only = reindex_to_wt(edit_only_raw, position_map)
+    compensated = reindex_to_wt(compensated_raw, position_map)
     return ThreeStateSAEDiff(
         original=original,
         edit_only=edit_only,
