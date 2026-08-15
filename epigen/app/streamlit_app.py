@@ -112,7 +112,7 @@ if submitted:
     st.subheader(f"MCMC candidates (top {len(result.mcmc_candidates)})")
     st.dataframe(
         [{"sequence": c.sequence, "combined_score": c.combined_score} for c in result.mcmc_candidates],
-        use_container_width=True,
+        width="stretch",
     )
 
     if result.top_candidate is None:
@@ -127,7 +127,7 @@ if submitted:
         )
 
         st.subheader(f"Contact microenvironment deltas ({len(result.contact_deltas)} rows)")
-        st.dataframe([vars(d) for d in result.contact_deltas], use_container_width=True)
+        st.dataframe([vars(d) for d in result.contact_deltas], width="stretch")
 
         top_sae_diff = result.sae_diffs.get(tc.candidate.sequence)
         if top_sae_diff is not None:
@@ -135,7 +135,7 @@ if submitted:
             from epigen.pipeline.sae_diff.run import top_k_deltas
 
             top_deltas = top_k_deltas(top_sae_diff.compensated_vs_edit, k=20)
-            st.dataframe([vars(d) for d in top_deltas], use_container_width=True)
+            st.dataframe([vars(d) for d in top_deltas], width="stretch")
 
         if result.sae_diffs:
             st.subheader(f"SAE feature space across candidates ({len(result.sae_diffs)} scored)")
@@ -177,7 +177,7 @@ if submitted:
                                 }
                                 for d in described.top_deltas
                             ],
-                            use_container_width=True,
+                            width="stretch",
                         )
 
                         if describe_choice == tc.candidate.sequence:
@@ -191,9 +191,7 @@ if submitted:
                             )
                             color_map = feature_color_map(described.diff.compensated, feature_choice)
                             html = render_structure_html(tc.folded.structure, color_map, chain_id=chain_id.strip() or "A")
-                            import streamlit.components.v1 as components
-
-                            components.html(html, height=450)
+                            st.html(html, unsafe_allow_javascript=True)
                         else:
                             st.caption(
                                 "Structural coloring is only available for the top candidate "
