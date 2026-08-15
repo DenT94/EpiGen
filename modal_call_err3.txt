@@ -1,0 +1,13 @@
+✓ Initialized. View run at https://modal.com/apps/dent94/proto-env/ap-4C5doLd3X7ZtkPHn525VS2
+✓ Created objects.
+├── 🔨 Created mount 
+│   /private/tmp/claude-501/-Users-dtrimcev-Dropbox-Work-Main-EpiGen/1f75bbe8-d1b2-4afb-8ddf-a9b13307cc25/sc
+│   ratchpad/test_nested_modal.py
+└── 🔨 Created function test_nested_call.
+/pkg/modal/client.py:233: UserWarning: Modal tokens provided by MODAL_TOKEN_ID and MODAL_TOKEN_SECRET (or through the config file) are ignored inside containers.
+  warnings.warn(
+
+[1AConnecting to modal container: 0it [00:00, ?it/s]
+[1AConnecting to modal container: 0it [00:14, ?it/s]
+Stopping app - local entrypoint completed.
+✓ App completed. View run at https://modal.com/apps/dent94/proto-env/ap-4C5doLd3X7ZtkPHn525VS2

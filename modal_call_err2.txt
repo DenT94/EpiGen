@@ -1,0 +1,62 @@
+✓ Initialized. View run at https://modal.com/apps/dent94/main/ap-YulCeERp17ZQtRn7aXoteG
+✓ Created objects.
+├── 🔨 Created mount 
+│   /private/tmp/claude-501/-Users-dtrimcev-Dropbox-Work-Main-EpiGen/1f75bbe8-d1b2-4afb-8ddf-a9b13307cc25/sc
+│   ratchpad/test_nested_modal.py
+└── 🔨 Created function test_nested_call.
+/pkg/modal/client.py:233: UserWarning: Modal tokens provided by MODAL_TOKEN_ID and MODAL_TOKEN_SECRET (or through the config file) are ignored inside containers.
+  warnings.warn(
+ERROR: Tool esm2-embedding: modal dispatch raised ToolNotDeployedError: Tool 'esm2-embedding' needs Modal app 'proto-tools-esm2', which is not deployed in the active workspace. Deploy it with:
+
+    proto-tools deploy --apps esm2 --env <name>
+
+More: https://github.com/proto-bio/proto-tools
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.10/site-packages/proto_tools/modal/client.py", line 212, in _bound_method
+    service_cls.hydrate()
+  File "/pkg/synchronicity/synchronizer.py", line 819, in proxy_method
+    return wrapped_method(instance, *args, **kwargs)
+  File "/pkg/synchronicity/combined_types.py", line 33, in __call__
+    raise uc_exc.exc
+  File "/pkg/modal/_object.py", line 360, in hydrate
+    await resolver.load(self, root_load_context)
+  File "/pkg/modal/_resolver.py", line 109, in load
+    return await cached_future
+  File "/pkg/modal/_resolver.py", line 87, in loader
+    await obj._load(obj, self, load_context, existing_object_id)
+  File "/pkg/modal/cls.py", line 697, in _load_remote
+    raise NotFoundError(
+modal.exception.NotFoundError: Lookup failed for Cls 'ESM2Service' from the 'proto-tools-esm2' app (in the 'main' environment): App 'proto-tools-esm2' not found in environment 'main'.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/pkg/modal/_runtime/container_io_manager.py", line 977, in handle_input_exception
+    yield
+  File "/pkg/modal/_container_entrypoint.py", line 187, in run_input_sync
+    values = io_context.call_function_sync()
+  File "/pkg/modal/_runtime/container_io_manager.py", line 265, in call_function_sync
+    expected_value_or_values = self.finalized_function.callable(*args, **kwargs)
+  File "/root/test_nested_modal.py", line 24, in test_nested_call
+    result = run_esm2_embeddings(
+  File "/usr/local/lib/python3.10/site-packages/proto_tools/tools/tool_registry.py", line 1030, in wrapper
+    return _wrapper_body(inputs, config, instance)
+  File "/usr/local/lib/python3.10/site-packages/proto_tools/tools/tool_registry.py", line 1347, in _wrapper_body
+    return _make_error_output_or_raise(output_class, key, start_time, e, traceback.format_exc())
+  File "/usr/local/lib/python3.10/site-packages/proto_tools/tools/tool_registry.py", line 2166, in _make_error_output_or_raise
+    raise exception
+  File "/usr/local/lib/python3.10/site-packages/proto_tools/tools/tool_registry.py", line 1318, in _wrapper_body
+    dispatched = _dispatch_remote_in_chunks(
+  File "/usr/local/lib/python3.10/site-packages/proto_tools/tools/tool_registry.py", line 503, in _dispatch_remote_in_chunks
+    return dispatch_one(inputs, config)
+  File "/usr/local/lib/python3.10/site-packages/proto_tools/modal/client.py", line 483, in dispatch_to_modal
+    method = _bound_method(app_name, service_class, method_name, key, scaledown_window, environment=env, client=client)
+  File "/usr/local/lib/python3.10/site-packages/proto_tools/modal/client.py", line 214, in _bound_method
+    raise _missing_lookup_error(tool_key, app_name, environment, client) from exc
+proto_tools.modal.client.ToolNotDeployedError: Tool 'esm2-embedding' needs Modal app 'proto-tools-esm2', which is not deployed in the active workspace. Deploy it with:
+
+    proto-tools deploy --apps esm2 --env <name>
+
+More: https://github.com/proto-bio/proto-tools
+
+Stopping app - uncaught exception raised locally: ExecutionError('Could not deserialize remote exception due to local error:\nEncountered an error when deserializing an object in the local environment (see above for details).\nThis can happen if your local environment does not have the remote exception definitions.\nHere is the remote traceback:\nTraceback (most recent call last):\n  File "/usr/local/lib/python3.10/site-packages/proto_tools/modal/client.py", line 212, in _bound_method\n    service_cls.hydrate()\n  File "/pkg/synchronicity/synchronizer.py", line 819, in proxy_method\n    return wrapped_method(instance, *args, **kwargs)\n  File "/pkg/synchronicity/combined_types.py", line 33, in __call__\n    raise uc_exc.exc\n  File "/pkg/modal/_object.py", line 360, in hydrate\n    await resolver.load(self, root_load_context)\n  File "/pkg/modal/_resolver.py", line 109, in load\n    return await cached_future\n  File "/pkg/modal/_resolver.py", line 87, in loader\n    await obj._load(obj, self, load_context, existing_object_id)\n  File.

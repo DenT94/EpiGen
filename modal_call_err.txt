@@ -1,0 +1,39 @@
+✓ Initialized. View run at https://modal.com/apps/dent94/main/ap-edcvdYpXsLT2rtpBOQWFxf
+✓ Created objects.
+├── 🔨 Created mount 
+│   /private/tmp/claude-501/-Users-dtrimcev-Dropbox-Work-Main-EpiGen/1f75bbe8-d1b2-4afb-8ddf-a9b13307cc25/sc
+│   ratchpad/test_nested_modal.py
+└── 🔨 Created function test_nested_call.
+ERROR: Tool esm2-embedding: modal dispatch raised ModalCredentialsError: device='modal' needs Modal credentials, but none are configured (no MODAL_TOKEN_ID/SECRET, no ~/.modal.toml).
+Authenticate with:  modal token new
+Then confirm with:  modal profile current
+Setup guide: https://github.com/proto-bio/proto-tools
+Traceback (most recent call last):
+  File "/pkg/modal/_runtime/container_io_manager.py", line 977, in handle_input_exception
+    yield
+  File "/pkg/modal/_container_entrypoint.py", line 187, in run_input_sync
+    values = io_context.call_function_sync()
+  File "/pkg/modal/_runtime/container_io_manager.py", line 265, in call_function_sync
+    expected_value_or_values = self.finalized_function.callable(*args, **kwargs)
+  File "/root/test_nested_modal.py", line 19, in test_nested_call
+    result = run_esm2_embeddings(
+  File "/usr/local/lib/python3.10/site-packages/proto_tools/tools/tool_registry.py", line 1030, in wrapper
+    return _wrapper_body(inputs, config, instance)
+  File "/usr/local/lib/python3.10/site-packages/proto_tools/tools/tool_registry.py", line 1347, in _wrapper_body
+    return _make_error_output_or_raise(output_class, key, start_time, e, traceback.format_exc())
+  File "/usr/local/lib/python3.10/site-packages/proto_tools/tools/tool_registry.py", line 2166, in _make_error_output_or_raise
+    raise exception
+  File "/usr/local/lib/python3.10/site-packages/proto_tools/tools/tool_registry.py", line 1318, in _wrapper_body
+    dispatched = _dispatch_remote_in_chunks(
+  File "/usr/local/lib/python3.10/site-packages/proto_tools/tools/tool_registry.py", line 503, in _dispatch_remote_in_chunks
+    return dispatch_one(inputs, config)
+  File "/usr/local/lib/python3.10/site-packages/proto_tools/modal/client.py", line 474, in dispatch_to_modal
+    _require_modal_credentials(client)
+  File "/usr/local/lib/python3.10/site-packages/proto_tools/modal/client.py", line 161, in _require_modal_credentials
+    raise ModalCredentialsError("none are configured (no MODAL_TOKEN_ID/SECRET, no ~/.modal.toml)")
+proto_tools.modal.client.ModalCredentialsError: device='modal' needs Modal credentials, but none are configured (no MODAL_TOKEN_ID/SECRET, no ~/.modal.toml).
+Authenticate with:  modal token new
+Then confirm with:  modal profile current
+Setup guide: https://github.com/proto-bio/proto-tools
+
+Stopping app - uncaught exception raised in remote container: ModalCredentialsError("device='modal' needs Modal credentials, but device='modal' needs Modal credentials, but none are configured (no MODAL_TOKEN_ID/SECRET, no ~/.modal.toml).\nAuthenticate with:  modal token new\nThen confirm with:  modal profile current\nSetup guide: https://github.com/proto-bio/proto-tools.\nAuthenticate with:  modal token new\nThen confirm with:  modal profile current\nSetup guide: https://github.com/proto-bio/proto-tools").
