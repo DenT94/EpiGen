@@ -63,8 +63,10 @@ while preserving the inserted motif's surface accessibility.
 
 - Streamlit for UI (input: edit position + insertion sequence; output:
   ranked compensatory candidates + agent explanations)
-- Biohub Platform API (biohub.ai) for ESMFold2, ESMC, ESMC SAE model,
-  binder design protocol — register API key day 1, watch rate limits
+- ESMFold2, ESMC, ESMC SAE model via `proto-tools` + Modal (`device="modal"`,
+  `proto-env` environment) rather than a hosted Biohub API — proto-tools
+  downloads Biohub's open weights and runs them on Modal directly, so no API
+  key is needed. `.env`/`BIOHUB_API_KEY` is left in place but unused.
 - Local: contact-map diff + energy scoring, orchestration logic
 - Proto for orchestrating the design part
 - Modal for compute

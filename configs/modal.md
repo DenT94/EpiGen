@@ -6,8 +6,13 @@
 - Deployed apps (via `proto-tools deploy --apps <name> --env proto-env`):
   - `esmif1` — ESM-IF1 inverse folding
   - `proteinmpnn` — ProteinMPNN inverse folding
-  - (Biohub API covers ESMFold2 / ESMC / ESMC SAE / binder design directly —
-    those don't need a Modal deployment.)
+  - `esmfold2` — all-atom structure prediction (stage 1 fold/refold)
+  - `esmc` — embeddings + SAE features (`esmc-sae-features` reuses this same
+    deployed app, just a different `operation` in the dispatch payload)
+
+  Decision: ESMFold2/ESMC/ESMC-SAE run through proto-tools+Modal like
+  everything else, not the hosted Biohub API — see CLAUDE.md's Stack
+  section. `.env`/`BIOHUB_API_KEY` is unused as a result.
 
 ## Using a deployed tool from code
 
