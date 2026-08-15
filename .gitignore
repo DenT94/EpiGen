@@ -34,6 +34,9 @@ data/*
 # proto-tools deploy logs
 logs/
 
+# auto-commit script log
+scripts/auto_commit.log
+
 # OS
 .DS_Store
 
