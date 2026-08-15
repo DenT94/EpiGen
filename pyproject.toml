@@ -9,6 +9,7 @@ dependencies = [
     "numpy",
     "pandas",
     "requests",
+    "python-dotenv",
     "proto-tools @ git+https://github.com/evo-design/proto-tools.git",
 ]
 
