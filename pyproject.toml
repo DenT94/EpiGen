@@ -10,6 +10,7 @@ dependencies = [
     "pandas",
     "requests",
     "python-dotenv",
+    "py2Dmol",
     "proto-tools @ git+https://github.com/evo-design/proto-tools.git",
 ]
 
