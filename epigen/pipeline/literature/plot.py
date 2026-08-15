@@ -1,9 +1,9 @@
 """Static annotation-track figure: one row per functional/structural range, plus the
 edit position and compensatory window overlaid.
 
-Same visual idiom as the reference polyprotein map (a backbone bar, one
+Same visual idiom as the reference map (a backbone bar, one
 labeled row per feature below it, colored by category) -- just for a single
-construct instead of a multi-protein polyprotein, and with the edit-window
+construct instead of a multi-protein, and with the edit-window
 overlay a design tool needs that a literature figure doesn't.
 """
 
