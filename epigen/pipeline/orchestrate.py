@@ -98,8 +98,6 @@ def run_end_to_end(
         temperature=temperature,
         candidate_num=candidate_num,
         seed=seed,
-        esm2_scores=esm2_scores,
-        pmpnn_scores=pmpnn_scores,
     )
 
     top_candidate: RefoldedCandidate | None = None
