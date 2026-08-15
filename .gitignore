@@ -37,6 +37,9 @@ logs/
 # auto-commit script log
 scripts/auto_commit.log
 
+# Claude Code local state
+.claude/
+
 # OS
 .DS_Store
 
