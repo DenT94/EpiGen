@@ -179,5 +179,25 @@ if submitted:
                             ],
                             use_container_width=True,
                         )
+
+                        if describe_choice == tc.candidate.sequence:
+                            from epigen.pipeline.sae_diff.structural_viz import feature_color_map, render_structure_html
+
+                            st.caption("Color the top candidate's structure by one of the features above.")
+                            feature_choice = st.selectbox(
+                                "Feature to color by",
+                                [d.feature_index for d in described.top_deltas],
+                                format_func=lambda fi: f"{fi}: {described.descriptions.get(fi, {}).get('label', '(no label)')}",
+                            )
+                            color_map = feature_color_map(described.diff.compensated, feature_choice)
+                            html = render_structure_html(tc.folded.structure, color_map, chain_id=chain_id.strip() or "A")
+                            import streamlit.components.v1 as components
+
+                            components.html(html, height=450)
+                        else:
+                            st.caption(
+                                "Structural coloring is only available for the top candidate "
+                                "(the only one that's actually been refolded into a real structure)."
+                            )
 else:
     st.info("Fill in the form and click Run.")

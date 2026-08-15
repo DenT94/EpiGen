@@ -17,6 +17,7 @@ from epigen.pipeline.alignment import PositionMap, identity_map
 from epigen.pipeline.sae_diff.run import (
     DESCRIBABLE_CONFIG,
     FeatureDelta,
+    ThreeStateSAEDiff,
     describe_top_features,
     diff_three_states,
     top_k_deltas,
@@ -30,6 +31,7 @@ class DescribedCandidate:
     candidate_sequence: str
     top_deltas: list[FeatureDelta]  # compensated_vs_original, at DESCRIBABLE_CONFIG
     descriptions: dict[int, dict[str, Any]]  # feature_index -> {label, description, category, ...}
+    diff: ThreeStateSAEDiff  # full diff at DESCRIBABLE_CONFIG -- e.g. `.compensated` feeds structural_viz.feature_color_map
 
 
 def describe_candidate(
@@ -64,4 +66,4 @@ def describe_candidate(
         k=DESCRIBABLE_CONFIG["k"],
         codebook_size=DESCRIBABLE_CONFIG["codebook_size"],
     )
-    return DescribedCandidate(candidate_sequence=candidate_sequence, top_deltas=top_deltas, descriptions=descriptions)
+    return DescribedCandidate(candidate_sequence=candidate_sequence, top_deltas=top_deltas, descriptions=descriptions, diff=diff)
