@@ -22,6 +22,7 @@ from epigen.pipeline.fold_invert_refold.run import (
     refold_and_gate,
 )
 from epigen.pipeline.fold_invert_refold.structure_source import get_structure
+from epigen.pipeline.literature import AnnotationRange, flag_positions, get_annotations
 from epigen.pipeline.oracle.codon import apply_aa_substitution_to_nt, reverse_translate
 from epigen.pipeline.oracle.correlation import expert_agreement, fraction_below_wt
 from epigen.pipeline.oracle.mcmc import MCMCCandidate, run_mcmc_search
@@ -41,6 +42,8 @@ class EndToEndResult:
     top_candidate: RefoldedCandidate | None  # the winning candidate, refolded + TM-gated
     contact_deltas: list[NeighborDelta]  # edit_only vs top_candidate, every changed position
     sae_diff: ThreeStateSAEDiff | None  # original / edit_only / top_candidate, pairwise
+    annotation_ranges: list[AnnotationRange]  # all known functional/structural ranges (literature.get_annotations)
+    annotation_conflicts: list[AnnotationRange]  # subset overlapping edit_position or window_positions
 
 
 def run_end_to_end(
@@ -60,6 +63,7 @@ def run_end_to_end(
     wt_nt_sequence: str | None = None,
     use_evo2: bool = True,
     weight_evo2: float = 0.34,
+    annotation_ranges: list[AnnotationRange] | None = None,
 ) -> EndToEndResult:
     """Run the full substitution-MVP loop and return everything needed to display it.
 
@@ -86,12 +90,23 @@ def run_end_to_end(
             `evo2` proto-tools app to be deployed to Modal.
         weight_evo2: Weight for Evo2's score in the combined MCMC energy,
             forwarded to `oracle.mcmc.run_mcmc_search`.
+        annotation_ranges: Known functional/structural ranges for `wt_sequence`,
+            in its own numbering (see `literature.get_annotations`). Defaults
+            to fetching them automatically via Paperclip, keyed off `pdb_id`
+            when given; pass `[]` explicitly to skip the lookup (e.g. offline).
+            Advisory only -- surfaced via `EndToEndResult.annotation_conflicts`,
+            never blocks the run, since literature coverage is incomplete for
+            most constructs.
     """
     if edit_position in window_positions:
         raise ValueError(
             f"edit_position {edit_position} must not be in window_positions {window_positions} -- "
             "the edit is a fixed constraint; MCMC only searches the compensatory window."
         )
+
+    if annotation_ranges is None:
+        annotation_ranges = get_annotations(wt_sequence, pdb_id=pdb_id)
+    annotation_conflicts = flag_positions(annotation_ranges, [edit_position, *window_positions])
 
     original = get_structure(wt_sequence, pdb_id=pdb_id, chain_id=chain_id, seed=seed)
 
@@ -144,4 +159,6 @@ def run_end_to_end(
         top_candidate=top_candidate,
         contact_deltas=contact_deltas,
         sae_diff=sae_result,
+        annotation_ranges=annotation_ranges,
+        annotation_conflicts=annotation_conflicts,
     )

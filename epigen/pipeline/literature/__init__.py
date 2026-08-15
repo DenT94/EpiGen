@@ -7,6 +7,6 @@ can steer the insertion/edit window away from them.
 
 from __future__ import annotations
 
-from epigen.pipeline.literature.annotations import AnnotationRange, get_annotations
+from epigen.pipeline.literature.annotations import AnnotationRange, flag_positions, get_annotations
 
-__all__ = ["AnnotationRange", "get_annotations"]
+__all__ = ["AnnotationRange", "flag_positions", "get_annotations"]

@@ -160,3 +160,12 @@ def get_annotations(sequence: str, *, pdb_id: str | None = None) -> list[Annotat
         ranges.append(AnnotationRange(label=_label(feature_type, row["description"], start, end), start=start, end=end, kind=kind))
 
     return sorted(ranges, key=lambda r: (r.start, r.end))
+
+
+def flag_positions(ranges: list[AnnotationRange], positions: list[int]) -> list[AnnotationRange]:
+    """Which `ranges` overlap any of `positions` -- e.g. an edit position or a candidate
+    MCMC search window, to flag "this touches a known functional/structural residue"
+    before trusting the edit-window choice. Positions and ranges must share numbering
+    (both in the same construct's coordinates, as `get_annotations` returns)."""
+    position_set = set(positions)
+    return [r for r in ranges if position_set.intersection(range(r.start, r.end + 1))]
