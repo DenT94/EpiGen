@@ -7,8 +7,8 @@ assemble a pipeline that designs biology to a spec you choose, from a single pro
 
 judging:
 
-generation: did you produce something new – whether candidate molecules, a gene circuit, an evolved sequence, or a predicted network?
-literature integration: did grounded lit search demonstrably shape some element of the pipeline design?
-constraint design: are your constraints realistic, and do they model the target biology at a useful level of resolution?
-biological plausibility: is each model's uncertainty surfaced rather than buried, and handled in a way that improves the odds of a biologically meaningful result?
-creative use of sponsor tools!
+ - generation: did you produce something new – whether candidate molecules, a gene circuit, an evolved sequence, or a predicted network?
+ - literature integration: did grounded lit search demonstrably shape some element of the pipeline design?
+ - constraint design: are your constraints realistic, and do they model the target biology at a useful level of resolution?
+ - biological plausibility: is each model's uncertainty surfaced rather than buried, and handled in a way that improves the odds of a biologically meaningful result?
+ - creative use of sponsor tools!

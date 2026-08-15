@@ -15,6 +15,11 @@ from dataclasses import dataclass
 
 from epigen.pipeline.alignment import identity_map
 from epigen.pipeline.contact_diff.diff import NeighborDelta, diff_all_changed_positions
+from epigen.pipeline.explain.evidence import (
+    CandidateEvidence,
+    build_candidate_evidence,
+    with_annotation_conflicts,
+)
 from epigen.pipeline.fold_invert_refold.run import (
     CompensatoryCandidate,
     FoldedStructure,
@@ -45,6 +50,7 @@ class EndToEndResult:
     sae_diffs: dict[str, ThreeStateSAEDiff]  # keyed by candidate sequence, one entry per mcmc_candidates
     annotation_ranges: list[AnnotationRange]  # all known functional/structural ranges (literature.get_annotations)
     annotation_conflicts: list[AnnotationRange]  # subset overlapping edit_positions or window_positions
+    top_candidate_evidence: CandidateEvidence | None  # stage-4 input bundle for top_candidate; None if no candidates
 
 
 def run_end_to_end(
@@ -148,6 +154,7 @@ def run_end_to_end(
     top_candidate: RefoldedCandidate | None = None
     contact_deltas: list[NeighborDelta] = []
     sae_diffs: dict[str, ThreeStateSAEDiff] = {}
+    top_candidate_evidence: CandidateEvidence | None = None
     if mcmc_candidates:
         pseudo = [CompensatoryCandidate(sequence=mcmc_candidates[0].sequence, perplexity=0.0, sequence_recovery=0.0)]
         top_candidate = refold_and_gate(pseudo, edit_only, seed=seed)[0]
@@ -165,6 +172,20 @@ def run_end_to_end(
         )
         sae_diffs = {c.sequence: diff for c, diff in zip(mcmc_candidates, candidate_diffs, strict=True)}
 
+        # Stage 4's input bundle -- cheap, deterministic assembly of what's already
+        # computed above (no LLM call here; that's explain.agent.explain_candidate,
+        # triggered on demand since it costs real Anthropic API time/money).
+        top_sae_diff = sae_diffs[top_candidate.candidate.sequence]
+        evidence = build_candidate_evidence(
+            edit_only,
+            top_candidate,
+            contact_deltas,
+            top_sae_diff,
+            edit_positions=edit_positions,
+            chain_id=chain_id,
+        )
+        top_candidate_evidence = with_annotation_conflicts(evidence, annotation_conflicts)
+
     return EndToEndResult(
         original=original,
         edit_only=edit_only,
@@ -176,4 +197,5 @@ def run_end_to_end(
         sae_diffs=sae_diffs,
         annotation_ranges=annotation_ranges,
         annotation_conflicts=annotation_conflicts,
+        top_candidate_evidence=top_candidate_evidence,
     )

@@ -12,6 +12,8 @@ dependencies = [
     "python-dotenv",
     "py2Dmol",
     "proto-tools @ git+https://github.com/evo-design/proto-tools.git",
+    "anthropic",
+    "pydantic",
 ]
 
 [tool.setuptools.packages.find]
