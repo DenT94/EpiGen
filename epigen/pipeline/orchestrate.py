@@ -22,6 +22,7 @@ from epigen.pipeline.fold_invert_refold.run import (
     refold_and_gate,
 )
 from epigen.pipeline.fold_invert_refold.structure_source import get_structure
+from epigen.pipeline.oracle.codon import apply_aa_substitution_to_nt, reverse_translate
 from epigen.pipeline.oracle.correlation import expert_agreement, fraction_below_wt
 from epigen.pipeline.oracle.mcmc import MCMCCandidate, run_mcmc_search
 from epigen.pipeline.oracle.scoring import position_scores_esm2, position_scores_proteinmpnn
@@ -56,6 +57,9 @@ def run_end_to_end(
     temperature: float = 1.0,
     candidate_num: int = 5,
     seed: int | None = 0,
+    wt_nt_sequence: str | None = None,
+    use_evo2: bool = True,
+    weight_evo2: float = 0.34,
 ) -> EndToEndResult:
     """Run the full substitution-MVP loop and return everything needed to display it.
 
@@ -71,6 +75,17 @@ def run_end_to_end(
             forwarded to `oracle.mcmc.run_mcmc_search`.
         seed: Shared seed threaded through every stochastic step, for
             reproducible runs.
+        wt_nt_sequence: Real coding sequence for `wt_sequence`, if known.
+            When omitted and `use_evo2=True`, one is generated via
+            `oracle.codon.reverse_translate` (a deterministic preferred-codon
+            table, not necessarily the real construct's codons -- see that
+            module's docstring). The fixed edit's codon is substituted the
+            same way MCMC substitutes codons for its own proposals.
+        use_evo2: Whether to score candidates with Evo2 (a third,
+            DNA-level expert) alongside ESM2/ProteinMPNN. Requires the
+            `evo2` proto-tools app to be deployed to Modal.
+        weight_evo2: Weight for Evo2's score in the combined MCMC energy,
+            forwarded to `oracle.mcmc.run_mcmc_search`.
     """
     if edit_position in window_positions:
         raise ValueError(
@@ -88,6 +103,11 @@ def run_end_to_end(
     correlation = expert_agreement(esm2_scores, pmpnn_scores, edit_only.sequence, window_positions)
     below_wt = fraction_below_wt(esm2_scores, pmpnn_scores, edit_only.sequence, window_positions)
 
+    edit_only_nt_sequence = None
+    if use_evo2:
+        wt_nt = wt_nt_sequence or reverse_translate(wt_sequence)
+        edit_only_nt_sequence = apply_aa_substitution_to_nt(wt_nt, edit_position, edit_residue)
+
     mcmc_candidates = run_mcmc_search(
         edit_only,
         window_positions,
@@ -98,6 +118,8 @@ def run_end_to_end(
         temperature=temperature,
         candidate_num=candidate_num,
         seed=seed,
+        nt_sequence=edit_only_nt_sequence,
+        weight_evo2=weight_evo2,
     )
 
     top_candidate: RefoldedCandidate | None = None
