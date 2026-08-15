@@ -104,7 +104,7 @@ if submitted:
             plot_annotation_map(
                 len(wt_sequence.strip()),
                 result.annotation_ranges,
-                edit_position=int(edit_position),
+                edit_position=int(edit_start),  # marks the edit's start only; plot_annotation_map doesn't take a range yet
                 window_positions=window_positions,
                 conflicts=result.annotation_conflicts,
             )
