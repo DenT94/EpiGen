@@ -76,8 +76,8 @@ def _neighbor_deltas_for_position(
 
     original_seq = original.structure.get_chain_sequence(chain_id)
     candidate_seq = candidate.structure.get_chain_sequence(chain_id)
-    original_plddt = original.structure.per_residue_plddt()
-    candidate_plddt = candidate.structure.per_residue_plddt()
+    original_plddt = original.structure.per_residue_plddt
+    candidate_plddt = candidate.structure.per_residue_plddt
     original_pae = getattr(original.structure.metrics, "pae", None)
     candidate_pae = getattr(candidate.structure.metrics, "pae", None)
 
