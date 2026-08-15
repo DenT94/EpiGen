@@ -1,11 +1,12 @@
 """End-to-end orchestration: WT -> edit -> oracle/MCMC search -> diffs.
 
 Substitution-only MVP (see todo.md for insertion notes). The edit itself
-(`edit_position`/`edit_residue`) is a fixed constraint threaded through the
-whole run -- MCMC only searches `window_positions`, which must exclude
-`edit_position`, implementing mypipelinethoughts.md's "constraint = retain
-edit sequence." This is the function the Streamlit app calls; kept separate
-from the UI so it's directly testable/scriptable.
+(`edit_start`/`edit_sequence`, a same-length multi-residue substitution --
+e.g. residues 20:27 replaced with "WHSPRAL") is a fixed constraint threaded
+through the whole run -- MCMC only searches `window_positions`, which must
+not overlap the edit, implementing mypipelinethoughts.md's "constraint =
+retain edit sequence." This is the function the Streamlit app calls; kept
+separate from the UI so it's directly testable/scriptable.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from epigen.pipeline.fold_invert_refold.run import (
 )
 from epigen.pipeline.fold_invert_refold.structure_source import get_structure
 from epigen.pipeline.literature import AnnotationRange, flag_positions, get_annotations
-from epigen.pipeline.oracle.codon import apply_aa_substitution_to_nt, reverse_translate
+from epigen.pipeline.oracle.codon import apply_aa_substitutions_to_nt, reverse_translate
 from epigen.pipeline.oracle.correlation import expert_agreement, fraction_below_wt
 from epigen.pipeline.oracle.mcmc import MCMCCandidate, run_mcmc_search
 from epigen.pipeline.oracle.scoring import position_scores_esm2, position_scores_proteinmpnn
@@ -43,14 +44,14 @@ class EndToEndResult:
     contact_deltas: list[NeighborDelta]  # edit_only vs top_candidate, every changed position
     sae_diffs: dict[str, ThreeStateSAEDiff]  # keyed by candidate sequence, one entry per mcmc_candidates
     annotation_ranges: list[AnnotationRange]  # all known functional/structural ranges (literature.get_annotations)
-    annotation_conflicts: list[AnnotationRange]  # subset overlapping edit_position or window_positions
+    annotation_conflicts: list[AnnotationRange]  # subset overlapping edit_positions or window_positions
 
 
 def run_end_to_end(
     wt_sequence: str,
     *,
-    edit_position: int,
-    edit_residue: str,
+    edit_start: int,
+    edit_sequence: str,
     window_positions: list[int],
     pdb_id: str | None = None,
     chain_id: str = "A",
@@ -69,10 +70,15 @@ def run_end_to_end(
 
     Args:
         wt_sequence: Wild-type sequence.
-        edit_position: 1-indexed position of the fixed disruptive edit.
-        edit_residue: One-letter amino acid the edit substitutes in.
+        edit_start: 1-indexed position of the first residue of the fixed
+            disruptive edit.
+        edit_sequence: Amino acid sequence the edit substitutes in, e.g.
+            "WHSPRAL" -- replaces `len(edit_sequence)` consecutive residues
+            starting at `edit_start` (residues `edit_start` through
+            `edit_start + len(edit_sequence) - 1`). A single-letter string
+            is a normal one-residue substitution.
         window_positions: 1-indexed positions MCMC may search for compensatory
-            mutations. Must not include `edit_position` -- the edit is a
+            mutations. Must not overlap the edit's positions -- the edit is a
             fixed constraint, not something MCMC can undo.
         pdb_id: Optional known PDB ID; skips the RCSB search if given.
         num_starting_points/chains_per_start/steps/temperature/candidate_num:
@@ -98,19 +104,21 @@ def run_end_to_end(
             never blocks the run, since literature coverage is incomplete for
             most constructs.
     """
-    if edit_position in window_positions:
+    edit_positions = list(range(edit_start, edit_start + len(edit_sequence)))
+    if set(edit_positions) & set(window_positions):
         raise ValueError(
-            f"edit_position {edit_position} must not be in window_positions {window_positions} -- "
+            f"edit positions {edit_positions} must not overlap window_positions {window_positions} -- "
             "the edit is a fixed constraint; MCMC only searches the compensatory window."
         )
 
     if annotation_ranges is None:
         annotation_ranges = get_annotations(wt_sequence, pdb_id=pdb_id)
-    annotation_conflicts = flag_positions(annotation_ranges, [edit_position, *window_positions])
+    annotation_conflicts = flag_positions(annotation_ranges, [*edit_positions, *window_positions])
 
     original = get_structure(wt_sequence, pdb_id=pdb_id, chain_id=chain_id, seed=seed)
 
-    edit_only_sequence = wt_sequence[: edit_position - 1] + edit_residue + wt_sequence[edit_position:]
+    edit_end = edit_start + len(edit_sequence) - 1
+    edit_only_sequence = wt_sequence[: edit_start - 1] + edit_sequence + wt_sequence[edit_end:]
     edit_only = fold_sequence(edit_only_sequence, seed=seed)
 
     esm2_scores = position_scores_esm2(edit_only.sequence)
@@ -121,7 +129,7 @@ def run_end_to_end(
     edit_only_nt_sequence = None
     if use_evo2:
         wt_nt = wt_nt_sequence or reverse_translate(wt_sequence)
-        edit_only_nt_sequence = apply_aa_substitution_to_nt(wt_nt, edit_position, edit_residue)
+        edit_only_nt_sequence = apply_aa_substitutions_to_nt(wt_nt, edit_start, edit_sequence)
 
     mcmc_candidates = run_mcmc_search(
         edit_only,

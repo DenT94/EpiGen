@@ -89,3 +89,23 @@ def apply_aa_substitution_to_nt(
     """
     start = 3 * (position - 1)
     return nt_sequence[:start] + codon_table[new_aa] + nt_sequence[start + 3 :]
+
+
+def apply_aa_substitutions_to_nt(
+    nt_sequence: str,
+    start_position: int,
+    new_residues: str,
+    codon_table: dict[str, str] = PREFERRED_CODON,
+) -> str:
+    """Replace the codons for a contiguous run of residues, e.g. a multi-residue edit
+    like "substitute residues 20:27 with WHSPRAL" (`start_position=20`, `new_residues="WHSPRAL"`).
+
+    Same-length substitution only (no insertion/deletion) -- `new_residues`
+    replaces exactly `len(new_residues)` consecutive residues starting at
+    `start_position`. Just `apply_aa_substitution_to_nt` applied once per
+    residue; this exists so callers doing a multi-residue edit don't have to
+    hand-loop it themselves.
+    """
+    for offset, aa in enumerate(new_residues):
+        nt_sequence = apply_aa_substitution_to_nt(nt_sequence, start_position + offset, aa, codon_table)
+    return nt_sequence

@@ -36,8 +36,14 @@ with st.form("run_form"):
 
     col1, col2 = st.columns(2)
     with col1:
-        edit_position = st.number_input("Edit position (1-indexed)", min_value=1, value=1)
-        edit_residue = st.text_input("Edit residue (one letter)", value="A", max_chars=1)
+        edit_start = st.number_input("Edit start position (1-indexed)", min_value=1, value=1)
+        edit_sequence = st.text_input(
+            "Edit sequence",
+            value="A",
+            help="Amino acid sequence to substitute in, starting at the edit start position. "
+            "A single letter is a normal one-residue substitution; a longer string "
+            "(e.g. 'WHSPRAL') replaces that many consecutive residues.",
+        )
     with col2:
         window_start = st.number_input("Compensatory window start", min_value=1, value=2)
         window_end = st.number_input("Compensatory window end", min_value=1, value=10)
@@ -53,17 +59,19 @@ with st.form("run_form"):
     submitted = st.form_submit_button("Run")
 
 if submitted:
+    edit_sequence_clean = edit_sequence.strip().upper()
+    edit_positions = list(range(int(edit_start), int(edit_start) + len(edit_sequence_clean)))
     window_positions = list(range(int(window_start), int(window_end) + 1))
-    if int(edit_position) in window_positions:
-        st.error("Edit position must not fall inside the compensatory window.")
+    if set(edit_positions) & set(window_positions):
+        st.error("Edit positions must not overlap the compensatory window.")
         st.stop()
 
     with st.spinner("Running fold -> oracle/MCMC -> diffs (this calls Modal several times)..."):
         try:
             result = run_end_to_end(
                 wt_sequence.strip(),
-                edit_position=int(edit_position),
-                edit_residue=edit_residue.strip().upper(),
+                edit_start=int(edit_start),
+                edit_sequence=edit_sequence_clean,
                 window_positions=window_positions,
                 pdb_id=pdb_id.strip() or None,
                 chain_id=chain_id.strip() or "A",
@@ -83,7 +91,7 @@ if submitted:
         f"**WT**: source={result.original.source}"
         + (f", pdb_id={result.original.pdb_id}" if result.original.pdb_id else f", pLDDT={result.original.plddt:.3f}")
     )
-    st.write(f"**Edit-only** (pos {edit_position}={edit_residue}): pLDDT={result.edit_only.plddt:.3f}")
+    st.write(f"**Edit-only** (pos {edit_start}={edit_sequence_clean}): pLDDT={result.edit_only.plddt:.3f}")
 
     st.subheader("Literature annotation map")
     if result.annotation_ranges:
