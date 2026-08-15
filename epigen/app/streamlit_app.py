@@ -16,11 +16,30 @@ from epigen.pipeline.orchestrate import run_end_to_end
 
 st.set_page_config(page_title="EpiGen", layout="wide")
 
-st.title("EpiGen")
-st.caption(
-    "Protease-gated selective antibiotic design with agentic "
-    "compensatory-mutation explanation. Substitution-only MVP."
-)
+
+@st.cache_data(show_spinner=False)
+def _cached_run_end_to_end(*args, **kwargs):
+    """Cache the full pipeline result by exact call arguments.
+
+    Each run is several Modal calls deep and takes minutes -- identical
+    settings (same sequence, edit, window, MCMC config, seed) should load
+    instantly from cache instead of recomputing and re-spending Modal time.
+    MCMC is already fully reproducible given the same seed, so this changes
+    nothing about correctness, only redundant recomputation.
+    """
+    return run_end_to_end(*args, **kwargs)
+
+title_col, clear_col = st.columns([5, 1])
+with title_col:
+    st.title("EpiGen")
+    st.caption(
+        "Protease-gated selective antibiotic design with agentic "
+        "compensatory-mutation explanation. Substitution-only MVP."
+    )
+with clear_col:
+    if st.button("Clear cache", help="Force every run to recompute instead of loading a cached result."):
+        _cached_run_end_to_end.clear()
+        st.toast("Cache cleared.")
 
 with st.form("run_form"):
     wt_sequence = st.text_area(
@@ -77,7 +96,7 @@ if submitted:
 
     with st.spinner("Running fold -> oracle/MCMC -> diffs (this calls Modal several times)..."):
         try:
-            result = run_end_to_end(
+            result = _cached_run_end_to_end(
                 wt_sequence.strip(),
                 edit_start=int(edit_start),
                 edit_sequence=edit_sequence_clean,
