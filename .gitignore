@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# Env / secrets
+.env
+.env.*
+*.key
+secrets.toml
+.streamlit/secrets.toml
+
+# Data & model artifacts (large / regenerable)
+data/*
+!data/.gitkeep
+*.pdb
+*.cif
+*.pt
+*.ckpt
+*.npz
+
+# Proto-tools cache
+.proto/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/

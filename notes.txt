@@ -1,0 +1,3 @@
+submit to: julia@gxl.ai
+format: google slides
+youtube allowed

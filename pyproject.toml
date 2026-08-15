@@ -1,0 +1,16 @@
+[project]
+name = "epigen"
+version = "0.1.0"
+description = "Protease-gated selective antibiotic design tool with agentic compensatory-mutation explanation."
+requires-python = ">=3.10"
+dependencies = [
+    "streamlit",
+    "biopython",
+    "numpy",
+    "pandas",
+    "requests",
+    "proto-tools @ git+https://github.com/evo-design/proto-tools.git",
+]
+
+[tool.setuptools.packages.find]
+include = ["epigen*"]
