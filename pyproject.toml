@@ -10,7 +10,11 @@ dependencies = [
     "pandas",
     "requests",
     "python-dotenv",
-    "py2Dmol",
+    # PyPI's latest release (1.6.5) predates the cartoon-style renderer (viewer-cartoon.min.js,
+    # `style="cartoon"` on py2Dmol.view()) -- that's only on GitHub main as of this writing, not
+    # yet cut into a release. Pull from source until a PyPI release catches up (same pattern
+    # proto-tools already uses below).
+    "py2Dmol @ git+https://github.com/sokrypton/py2Dmol.git",
     "proto-tools @ git+https://github.com/evo-design/proto-tools.git",
     "anthropic",
     "pydantic",

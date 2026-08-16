@@ -13,7 +13,11 @@ from __future__ import annotations
 import streamlit as st
 
 from epigen.pipeline.fold_invert_refold.run import fold_sequence
-from epigen.pipeline.sae_diff.structural_viz import render_structure_html
+from epigen.pipeline.sae_diff.structural_viz import (
+    align_to_reference,
+    compute_reference_camera,
+    render_structure_html,
+)
 
 # Solarized accents, consistent with .streamlit/config.toml.
 EDIT_COLOR = "#dc322f"  # red -- the fixed disruptive edit
@@ -26,13 +30,35 @@ def _cached_fold(sequence: str, seed: int):
     return fold_sequence(sequence, seed=seed)
 
 
+@st.cache_data(show_spinner=False)
+def _cached_reference_camera(structure_pdb: str, chain_id: str):
+    """WT's fixed py2Dmol camera, cached by its own PDB text -- cheap (local PCA, no
+    Modal call) but no reason to recompute it on every Streamlit rerun."""
+    from proto_tools.entities.structures import Structure
+
+    return compute_reference_camera(Structure(structure=structure_pdb, structure_format="pdb"), chain_id)
+
+
 def _diff_positions(reference: str, other: str, positions: list[int]) -> list[int]:
     """1-indexed positions in `positions` where `other` differs from `reference`."""
     return [p for p in positions if reference[p - 1] != other[p - 1]]
 
 
-def _render(structure, color_map: dict[int, str], chain_id: str, *, height: int = 480) -> None:
-    html = render_structure_html(structure, color_map, chain_id=chain_id)
+def _render(
+    structure,
+    color_map: dict[int, str],
+    chain_id: str,
+    *,
+    reference_structure,
+    reference_camera,
+    height: int = 480,
+) -> None:
+    """Kabsch-align `structure` onto `reference_structure` and render it with the fixed
+    `reference_camera`, so every view in the Structure viewer shares one viewpoint instead
+    of each independently computing its own best-fit camera angle (see structural_viz.py's
+    module docstring)."""
+    aligned = align_to_reference(structure, reference_structure, chain_id)
+    html = render_structure_html(aligned, color_map, chain_id=chain_id, reference_camera=reference_camera)
     # st.html(..., unsafe_allow_javascript=True) silently drops py2Dmol's ~100KB inline
     # rendering script when it re-executes scripts client-side (only small scripts survive,
     # so the control panel chrome renders but the actual WebGL viewer never populates -- an
@@ -68,6 +94,9 @@ window_positions = inputs["window_positions"]
 chain_id = inputs["chain_id"]
 seed = inputs["seed"]
 
+# WT is the shared reference every other view aligns onto and borrows the camera from.
+reference_camera = _cached_reference_camera(result.original.structure.structure_pdb, chain_id)
+
 view_options = [":material/biotech: WT", ":material/edit: Edit-only"]
 if result.top_candidate is not None:
     view_options.append(":material/check_circle: Top candidate (compensated)")
@@ -88,13 +117,25 @@ elif view.endswith("WT"):
     st.caption(f"WT structure ({result.original.source}) with the edit's target positions highlighted.")
     _legend(edit=True, compensatory=False)
     color_map = {p: EDIT_COLOR for p in edit_positions}
-    _render(result.original.structure, color_map, chain_id)
+    _render(
+        result.original.structure,
+        color_map,
+        chain_id,
+        reference_structure=result.original.structure,
+        reference_camera=reference_camera,
+    )
 
 elif view.endswith("Edit-only"):
     st.caption(f"Edit applied, no compensation yet (pLDDT={result.edit_only.plddt:.3f}).")
     _legend(edit=True, compensatory=False)
     color_map = {p: EDIT_COLOR for p in edit_positions}
-    _render(result.edit_only.structure, color_map, chain_id)
+    _render(
+        result.edit_only.structure,
+        color_map,
+        chain_id,
+        reference_structure=result.original.structure,
+        reference_camera=reference_camera,
+    )
 
 elif view.endswith("Top candidate (compensated)"):
     tc = result.top_candidate
@@ -106,7 +147,13 @@ elif view.endswith("Top candidate (compensated)"):
     )
     _legend(edit=True, compensatory=True)
     color_map = {p: EDIT_COLOR for p in edit_positions} | {p: COMPENSATORY_COLOR for p in compensatory_positions}
-    _render(tc.folded.structure, color_map, chain_id)
+    _render(
+        tc.folded.structure,
+        color_map,
+        chain_id,
+        reference_structure=result.original.structure,
+        reference_camera=reference_camera,
+    )
 
 else:  # "Other MCMC candidate"
     candidate_choice = st.selectbox(
@@ -130,4 +177,10 @@ else:  # "Other MCMC candidate"
         st.caption(f"pLDDT={folded.plddt:.3f} (no self-consistency TM-score -- this candidate wasn't refold-gated).")
         _legend(edit=True, compensatory=True)
         color_map = {p: EDIT_COLOR for p in edit_positions} | {p: COMPENSATORY_COLOR for p in compensatory_positions}
-        _render(folded.structure, color_map, chain_id)
+        _render(
+            folded.structure,
+            color_map,
+            chain_id,
+            reference_structure=result.original.structure,
+            reference_camera=reference_camera,
+        )
