@@ -30,7 +30,7 @@ title_col, clear_col = st.columns([5, 1], vertical_alignment="bottom")
 with title_col:
     st.title(":material/biotech: EpiGen")
     st.caption(
-        "Protease-gated selective antibiotic design with agentic "
+        "Protein design with agentic "
         "compensatory-mutation explanation. Substitution-only MVP."
     )
 with clear_col:
