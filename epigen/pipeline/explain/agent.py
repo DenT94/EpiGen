@@ -35,8 +35,8 @@ MODEL = "claude-opus-5"
 Verdict = Literal["rescues", "partial_rescue", "does_not_rescue", "inconclusive"]
 
 SYSTEM_PROMPT = """\
-You are the explanation layer of EpiGen, a protease-gated selective-antibiotic \
-design tool. A disruptive edit (an inserted/substituted protease-cleavage motif) \
+You are the explanation layer of EpiGen, a protein \
+design tool. A disruptive edit (an inserted/substituted motif) \
 was made to a scaffold protein, and a compensatory mutation candidate was \
 generated to restore stability while keeping the motif surface-accessible \
 (cleavable). You are given the complete numeric evidence for one candidate: \
@@ -150,7 +150,14 @@ def explain_candidate(evidence: CandidateEvidence, *, client: anthropic.Anthropi
 
     response = client.messages.parse(
         model=MODEL,
-        max_tokens=2048,
+        # Was 2048 -- too tight combined with thinking={"type": "adaptive"} (no token cap
+        # on this model) + output_config.effort="high" (deliberately thorough reasoning):
+        # thinking alone could burn through most/all of a 2048 budget before the model even
+        # started writing the final JSON, truncating CandidateExplanation mid-string
+        # ("EOF while parsing a string" from pydantic's json_invalid -- the response hit
+        # max_tokens before the JSON closed, not a malformed-output bug). Raised generously
+        # since thinking effort here isn't itself capped.
+        max_tokens=8192,
         thinking={"type": "adaptive"},
         output_config={"effort": "high"},
         system=SYSTEM_PROMPT,
