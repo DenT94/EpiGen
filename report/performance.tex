@@ -1,0 +1,162 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{parskip}
+\usepackage{listings}
+\lstset{basicstyle=\ttfamily\small, breaklines=true, columns=fullflexible}
+
+\definecolor{warnbg}{RGB}{255,243,205}
+\newcommand{\warnbox}[1]{%
+  \par\noindent\colorbox{warnbg}{\parbox{\dimexpr\linewidth-2\fboxsep}{\textbf{Caveat:} #1}}\par\vspace{4pt}
+}
+
+\title{EpiGen: where the wall-clock time actually goes}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section*{Why this document exists}
+
+A run was timed end to end on the whole-loop-on-Modal path
+(\texttt{use\_modal\_mcmc=True}) to answer ``what's taking so long.'' This is
+that measurement, what it does and doesn't tell us, and the concrete levers
+available to cut it down.
+
+\tableofcontents
+
+\section{The measured run}
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Config & Value \\
+\midrule
+Scaffold & 193L (lysozyme, 129 aa) \\
+Edit & position 60, \texttt{WHSPRAL} (7 residues) \\
+Window & full protein minus the edit (122 positions) \\
+\texttt{num\_starting\_points} $\times$ \texttt{chains\_per\_start} & $20 \times 2 = 40$ chains \\
+\texttt{steps} & 20 (upper bound; chains freeze early) \\
+\texttt{candidate\_num} & 5 \\
+\texttt{use\_modal\_mcmc} & \texttt{True} (whole search loop runs inside one Modal call) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Total wall time: 1075.7s (\textasciitilde 18.0 min).} Result:
+5 candidates, \texttt{wt\_score=720.210}, \texttt{wt\_nt\_source=codonfm}
+(193L has no verified GenBank CDS for this sequence -- Evo2's nt sequence
+came from the CodonFM fallback, not a real deposited coding sequence; see
+\texttt{oracle.nt\_resolution}).
+
+\section{The two-bucket breakdown}
+
+The client-visible log only prints a timer around each \emph{separate} Modal
+dispatch (``Connecting to modal container: 0it [XXs, ?it/s]''). Summing the
+non-zero ones gives the overhead \emph{outside} the search loop itself; the
+remainder is time spent inside the one, single Modal call that runs the
+entire MCMC search server-side.
+
+\begin{center}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Bucket & Time & Share \\
+\midrule
+Visible container-connect overhead (sum of non-zero ``Connecting...'' timers) & \textasciitilde 204s & 19\% \\
+Inside the single \texttt{run\_mcmc\_search\_remote} call (no separate connect events) & \textasciitilde 872s & 81\% \\
+\midrule
+Total & 1075.7s & 100\% \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The 204s bucket is the one-off calls \emph{around} the search: the initial
+fold, ProteinMPNN warm-start generation (\texttt{propose\_compensatory\_mutations}),
+the pre/post-search ESM2+ProteinMPNN oracle-sanity-check batch calls, and
+refold+TM-align on the top candidates. This is exactly the overhead
+\texttt{use\_modal\_mcmc=True} was built to shrink for the \emph{search
+itself} (collapsing per-round laptop$\leftrightarrow$Modal round trips into
+one container-to-container loop) -- and it did: none of the 20 MCMC rounds
+shows up here as a separate connect event, because they're not separate
+dispatches anymore.
+
+The 872s bucket -- the large majority of the wall time -- is therefore
+\emph{not} network/dispatch overhead. It's real compute time inside one
+container: up to 20 rounds, each round scoring up to 40 chains' proposals
+with three experts (ESM2, ProteinMPNN, Evo2).
+
+\warnbox{This split is derived from the client-side log's dispatch timers,
+not from any instrumentation inside \texttt{run\_mcmc\_search}/
+\texttt{run\_mcmc\_search\_remote} itself. It tells us \emph{overhead vs.\
+everything else}, not which of the three experts (or which round) dominates
+the 872s. See \S\ref{sec:next} for what real per-expert numbers would take.}
+
+\section{Why the inner 872s is plausibly real compute, not something broken}
+
+Three things compound inside that one call:
+
+\begin{itemize}
+  \item \textbf{Round count is worst-case, not average-case.} The round loop
+    only exits early once \emph{every} chain has frozen (its own score
+    exceeded \texttt{wt\_score}). A handful of slow-to-converge chains out of
+    40 can force close to the full 20 rounds even if most chains froze
+    much earlier.
+  \item \textbf{Every active round pays three full batched model calls} --
+    \texttt{position\_scores\_esm2\_batch}, \texttt{position\_scores\_proteinmpnn\_batch},
+    and \texttt{window\_log\_prob\_batch} (Evo2) -- each over every still-active
+    chain's proposal.
+  \item \textbf{Evo2's call is the heaviest of the three per-token.} As of
+    today's window-restriction fix, it runs with \texttt{return\_logits=True} --
+    a full \texttt{(seq\_len, vocab\_size)} logits tensor per sequence, not
+    just a scalar \texttt{avg\_log\_likelihood} -- so it's doing meaningfully
+    more work per call than the old whole-sequence-average version, in
+    exchange for being scoped correctly (window-only, matching ESM2/ProteinMPNN)
+    instead of diluted over the whole sequence.
+\end{itemize}
+
+None of this is a bug; it's the cost of the fix instead of a symptom of
+it -- the network overhead is gone, what's left is the model compute the
+search was always going to need for a 40-chain, up-to-20-round, 3-expert
+search.
+
+\section{Levers to actually cut wall time}
+
+\begin{center}
+\begin{tabular}{@{}lp{0.65\textwidth}@{}}
+\toprule
+Lever & Effect \\
+\midrule
+Lower \texttt{steps} & Directly caps worst-case rounds; the freeze mechanism
+  already exits early for chains that converge, so this mostly trims the
+  slow tail. \\
+Fewer chains (\texttt{num\_starting\_points} $\times$ \texttt{chains\_per\_start}) &
+  Shrinks every round's batch size linearly; 40 chains is on the high end of
+  what's been run this session. \\
+Raise \texttt{weight\_evo2} or tune \texttt{temperature} & Changes how fast
+  chains cross the freeze threshold -- may shorten the effective round count
+  without touching \texttt{steps} itself, but changes what's being optimized. \\
+Drop Evo2 (\texttt{use\_evo2=False}) & Removes the heaviest per-round call
+  entirely -- back to a 2-expert search, faster but loses the DNA-level
+  signal. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{What would give a real per-expert breakdown}
+\label{sec:next}
+
+Right now there is no timestamp recorded around the individual ESM2 /
+ProteinMPNN / Evo2 calls \emph{inside} \texttt{run\_mcmc\_search}, on either
+the laptop-orchestrated or whole-loop-on-Modal path. Getting genuine
+per-expert numbers (not just ``inside vs.\ outside the big call'') would mean
+adding \texttt{time.time()} timers around each of the three batched calls in
+\texttt{oracle/mcmc.py}'s round loop, aggregating them (e.g.\ into the same
+checkpoint progress payload \texttt{oracle/checkpoint.py} already writes),
+and re-running. Not done here -- this document is the coarse split available
+from the existing log output, not a profiling pass.
+
+\end{document}

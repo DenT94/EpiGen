@@ -183,6 +183,16 @@ def render_structure_html(
     view.set_color(color_map, position=True)
     if reference_camera is not None:
         rotation_matrix, center = reference_camera
+        # `add_pdb` already baked *this* structure's own best_view(coords) rotation_matrix/
+        # center into `view.objects[-1]` (see py2Dmol viewer.py's add_pdb -> _update ->
+        # "Store rotation matrix and center on first frame") -- `_display_viewer` renders
+        # from `view.objects`, not from `view._rotation_matrix`/`_center` directly, so
+        # setting only those two top-level attributes (the previous version of this
+        # function) silently did nothing: every structure kept rendering with its own
+        # camera despite a `reference_camera` being passed in. Overwrite the baked-in
+        # per-object values too -- that's what actually gets serialized and rendered.
         view._rotation_matrix = np.array(rotation_matrix)
         view._center = np.array(center)
+        view.objects[-1]["rotation_matrix"] = rotation_matrix
+        view.objects[-1]["center"] = center
     return view._display_viewer(static_data=view.objects)
