@@ -57,7 +57,7 @@ class EndToEndResult:
     wt_score: float  # edit_only's own window_score -- the baseline every chain score below is measured against
     chain_starting_scores: list[float]  # one per MCMC chain, window_score at its starting sequence
     chain_ending_scores: list[float]  # one per MCMC chain, same order, window_score at its final sequence
-    wt_nt_source: str | None  # "given"/"genbank"/"codonfm" (oracle.nt_resolution), or None when use_evo2=False
+    wt_nt_source: str | None  # "given"/"genbank"/"codonfm" (oracle.nt_resolution), or None when weight_evo2=0
 
 
 def run_end_to_end(
@@ -75,7 +75,8 @@ def run_end_to_end(
     candidate_num: int = 5,
     seed: int | None = 0,
     wt_nt_sequence: str | None = None,
-    use_evo2: bool = True,
+    weight_esm2: float = 0.5,
+    weight_pmpnn: float = 0.5,
     weight_evo2: float = 0.34,
     annotation_ranges: list[AnnotationRange] | None = None,
     use_modal_mcmc: bool = False,
@@ -101,7 +102,7 @@ def run_end_to_end(
         seed: Shared seed threaded through every stochastic step, for
             reproducible runs.
         wt_nt_sequence: Real coding sequence for `wt_sequence`, if known --
-            always trusted as-is when given. When omitted and `use_evo2=True`,
+            always trusted as-is when given. When omitted and `weight_evo2 != 0`,
             one is resolved via `oracle.nt_resolution.resolve_wt_nt_sequence`:
             a real GenBank-deposited CDS when `original`'s resolved PDB entry
             cross-references one that verifiably translates to `wt_sequence`,
@@ -111,11 +112,15 @@ def run_end_to_end(
             `EndToEndResult.wt_nt_source`. The fixed edit's codon is
             substituted the same way MCMC substitutes codons for its own
             proposals.
-        use_evo2: Whether to score candidates with Evo2 (a third,
-            DNA-level expert) alongside ESM2/ProteinMPNN. Requires the
-            `evo2` proto-tools app to be deployed to Modal.
-        weight_evo2: Weight for Evo2's score in the combined MCMC energy,
-            forwarded to `oracle.mcmc.run_mcmc_search`.
+        weight_esm2/weight_pmpnn/weight_evo2: Per-expert weights in the combined MCMC
+            energy, forwarded to `oracle.mcmc.run_mcmc_search`/`window_score`. Set any of
+            these to exactly `0` to completely neglect that expert -- not just remove its
+            contribution to the score, but skip its Modal call entirely, every round (see
+            `oracle.mcmc.window_score`'s docstring for why a bare zero weight alone isn't
+            safe/sufficient). `weight_evo2 != 0` is also what turns Evo2 scoring on at
+            all: when it's `0`, `wt_nt_sequence` resolution above is skipped too (no
+            GenBank/CodonFM lookup, no nt bookkeeping) since nothing would use it.
+            Requires the `evo2` proto-tools app to be deployed to Modal when nonzero.
         annotation_ranges: Known functional/structural ranges for `wt_sequence`,
             in its own numbering (see `literature.get_annotations`). Defaults
             to fetching them automatically via Paperclip, keyed off `pdb_id`
@@ -169,7 +174,7 @@ def run_end_to_end(
 
     edit_only_nt_sequence = None
     wt_nt_source = None
-    if use_evo2:
+    if weight_evo2 != 0:
         wt_nt, wt_nt_source = resolve_wt_nt_sequence(
             wt_sequence, wt_nt_sequence=wt_nt_sequence, pdb_id=original.pdb_id, seed=seed,
         )
@@ -187,6 +192,8 @@ def run_end_to_end(
             candidate_num=candidate_num,
             seed=seed,
             nt_sequence=edit_only_nt_sequence,
+            weight_esm2=weight_esm2,
+            weight_pmpnn=weight_pmpnn,
             weight_evo2=weight_evo2,
             checkpoint_every=checkpoint_every,
         )
@@ -220,6 +227,8 @@ def run_end_to_end(
             candidate_num=candidate_num,
             seed=seed,
             nt_sequence=edit_only_nt_sequence,
+            weight_esm2=weight_esm2,
+            weight_pmpnn=weight_pmpnn,
             weight_evo2=weight_evo2,
         )
         mcmc_candidates = mcmc_result.candidates
@@ -268,13 +277,13 @@ def run_end_to_end(
     # docstring), since the laptop path (run_mcmc_search) always populates them now.
     def _window_scores_with_evo2(sequences: list[str], nt_sequences: list[str | None]) -> list[float]:
         evo2_terms: list[float]
-        if use_evo2 and all(nt is not None for nt in nt_sequences):
+        if weight_evo2 != 0 and all(nt is not None for nt in nt_sequences):
             evo2_terms = window_log_prob_batch(nt_sequences, window_positions)
         else:
             evo2_terms = [0.0] * len(sequences)
         return [
             window_score(
-                seq, window_positions, esm2_scores, pmpnn_scores, 0.5, 0.5,
+                seq, window_positions, esm2_scores, pmpnn_scores, weight_esm2, weight_pmpnn,
                 evo2_term=evo2_term, weight_evo2=weight_evo2,
             )
             for seq, evo2_term in zip(sequences, evo2_terms, strict=True)

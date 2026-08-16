@@ -78,13 +78,26 @@ def window_score(
     post-hoc caller (`orchestrate.py`'s `wt_score`/`chain_starting_scores`/
     `chain_ending_scores`) use, instead of each caller separately bolting
     `weight_evo2 * evo2_term` on afterward and risking the two formulas drifting apart.
+
+    Each expert's term is skipped entirely (not just multiplied by 0) when its weight is
+    exactly 0 -- two reasons, not just one: (1) a missing-key lookup
+    (`esm2_scores[pos - 1].get(aa, float("-inf"))`) returns `-inf`, and `0 * -inf` is
+    `nan` in IEEE754, not `0` -- multiplying by a zero weight instead of skipping would
+    silently poison the whole sum the first time a proposed AA has no table entry;
+    (2) it lets a caller pass `None` for `esm2_scores`/`pmpnn_scores` when that expert's
+    weight is 0, since the lookup is never reached -- see `run_mcmc_search`, which uses
+    exactly that to skip the expert's Modal call entirely, not just zero out its
+    contribution, when its weight is 0 ("completely neglected", not just down-weighted).
     """
     total = 0.0
     for pos in window_positions:
         aa = sequence[pos - 1]
-        total += weight_esm2 * esm2_scores[pos - 1].get(aa, float("-inf"))
-        total += weight_pmpnn * pmpnn_scores[pos - 1].get(aa, float("-inf"))
-    total += weight_evo2 * evo2_term
+        if weight_esm2:
+            total += weight_esm2 * esm2_scores[pos - 1].get(aa, float("-inf"))
+        if weight_pmpnn:
+            total += weight_pmpnn * pmpnn_scores[pos - 1].get(aa, float("-inf"))
+    if weight_evo2:
+        total += weight_evo2 * evo2_term
     return total
 
 
@@ -165,6 +178,12 @@ def run_mcmc_search(
     corresponding codon (see oracle/codon.py). When `None` (default), Evo2
     scoring is skipped entirely -- no nt bookkeeping, no extra Modal calls.
 
+    `weight_esm2`/`weight_pmpnn`/`weight_evo2`: set any of these to exactly `0` to
+    completely neglect that expert -- not just remove its contribution from the score,
+    but skip its Modal call every round entirely (see `window_score`'s docstring for why
+    a bare `weight * score` wouldn't be safe here). Evo2 is additionally gated by
+    `nt_sequence is not None` regardless of `weight_evo2`.
+
     `refold_every` doesn't gate individual rounds -- instead it's applied
     once, as a post-hoc structural safety net: the top `candidate_num * 3`
     pre-filter candidates are refolded and TM-gated via stage 1's
@@ -185,7 +204,13 @@ def run_mcmc_search(
     writing container once committed. `checkpoint_dir` is untouched by
     default (`None`) -- no filesystem writes, no behavior change.
     """
-    use_evo2 = nt_sequence is not None
+    # A weight of exactly 0 completely neglects that expert -- not just a 0 contribution
+    # to the score (see window_score's docstring for why that alone would be unsafe), but
+    # skipping its Modal call entirely, every round. `nt_sequence is None` still forces
+    # Evo2 off regardless of weight_evo2 -- there's no nt sequence to score without it.
+    use_esm2 = weight_esm2 != 0
+    use_pmpnn = weight_pmpnn != 0
+    use_evo2 = weight_evo2 != 0 and nt_sequence is not None
     num_chains = num_starting_points * chains_per_start
 
     resumed = checkpoint_store.load(checkpoint_dir) if checkpoint_dir else None
@@ -242,9 +267,15 @@ def run_mcmc_search(
         # Modal calls (see `run_mcmc_search`'s docstring / `MCMCSearchResult`).
         starting_sequences_per_chain = [c.sequence for c in chains]
 
-        # Round 0: score every chain's starting sequence once, to seed `score`.
-        esm2_batch = position_scores_esm2_batch([c.sequence for c in chains])
-        pmpnn_batch = position_scores_proteinmpnn_batch(folded.structure, [c.sequence for c in chains])
+        # Round 0: score every chain's starting sequence once, to seed `score`. Each
+        # expert's batch call is skipped (not just its result discarded) when its weight
+        # is 0 -- see use_esm2/use_pmpnn/use_evo2 above and window_score's docstring.
+        esm2_batch = position_scores_esm2_batch([c.sequence for c in chains]) if use_esm2 else [None] * len(chains)
+        pmpnn_batch = (
+            position_scores_proteinmpnn_batch(folded.structure, [c.sequence for c in chains])
+            if use_pmpnn
+            else [None] * len(chains)
+        )
         evo2_batch = (
             window_log_prob_batch([c.nt_sequence for c in chains], window_positions) if use_evo2 else [0.0] * len(chains)
         )
@@ -304,8 +335,10 @@ def run_mcmc_search(
             if use_evo2:
                 nt_proposals.append(apply_aa_substitution_to_nt(chain.nt_sequence, pos, new_aa))
 
-        esm2_batch = position_scores_esm2_batch(proposals)
-        pmpnn_batch = position_scores_proteinmpnn_batch(folded.structure, proposals)
+        esm2_batch = position_scores_esm2_batch(proposals) if use_esm2 else [None] * len(proposals)
+        pmpnn_batch = (
+            position_scores_proteinmpnn_batch(folded.structure, proposals) if use_pmpnn else [None] * len(proposals)
+        )
         evo2_batch = window_log_prob_batch(nt_proposals, window_positions) if use_evo2 else [0.0] * len(active_indices)
 
         for i, proposed_seq, esm2_scores, pmpnn_scores, evo2_score, proposed_nt in zip(

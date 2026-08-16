@@ -77,6 +77,18 @@ with st.form("run_form"):
         temperature = st.number_input("temperature", min_value=0.01, value=1.0)
         candidate_num = st.number_input("candidate_num", min_value=1, value=5)
         seed = st.number_input("seed", value=0)
+
+        st.caption("Expert weights -- set any to 0 to completely neglect that expert (skips its Modal call, not just its contribution to the score).")
+        with st.container(horizontal=True):
+            weight_esm2 = st.number_input("weight_esm2", min_value=0.0, value=0.5, step=0.05)
+            weight_pmpnn = st.number_input("weight_pmpnn", min_value=0.0, value=0.5, step=0.05)
+            weight_evo2 = st.number_input(
+                "weight_evo2",
+                min_value=0.0,
+                value=0.34,
+                step=0.05,
+                help="0 also skips resolving a coding sequence for Evo2 entirely (no GenBank/CodonFM lookup).",
+            )
         use_modal_mcmc = st.checkbox(
             "Run MCMC search whole-loop on Modal",
             value=False,
@@ -115,6 +127,9 @@ if submitted:
         temperature=float(temperature),
         candidate_num=int(candidate_num),
         seed=int(seed),
+        weight_esm2=float(weight_esm2),
+        weight_pmpnn=float(weight_pmpnn),
+        weight_evo2=float(weight_evo2),
         use_modal_mcmc=use_modal_mcmc,
     )
 
