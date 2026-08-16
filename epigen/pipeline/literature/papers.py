@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import replace
+from dataclasses import asdict, replace
 
+from epigen.pipeline.literature import cache
 from epigen.pipeline.literature.annotations import AccessionMetadata, AnnotationRange, PaperReference
 from epigen.pipeline.literature.paperclip_client import PaperclipError, run_paperclip
 
@@ -82,12 +83,24 @@ def _parse_search_results(stdout: str) -> list[PaperReference]:
 
 
 def _search(query: str, *, n: int) -> list[PaperReference]:
+    """Disk-cached by `(query, n)` (`literature.cache.load_paper_search`/
+    `save_paper_search`) -- the same protein/feature/position query returns the same
+    literature every time, so a repeat "Find supporting papers" click for an
+    already-searched protein is a cache hit, not another round of Paperclip subprocess
+    calls. Cached independently of `st.cache_data` -- see `literature.cache`'s
+    docstring for why."""
+    cache_hit, cached_results = cache.load_paper_search(query, n)
+    if cache_hit:
+        return [PaperReference(**r) for r in cached_results]
+
     try:
         stdout = run_paperclip(["search", "-s", "pmc", "-n", str(n), query], timeout=PAPERCLIP_SEARCH_TIMEOUT_S)
     except PaperclipError as exc:
         logger.warning(f"Paperclip search failed for {query!r} (after retries): {exc}")
         return []
-    return _parse_search_results(stdout)
+    results = _parse_search_results(stdout)
+    cache.save_paper_search(query, n, [asdict(r) for r in results])
+    return results
 
 
 def _query_for(metadata: AccessionMetadata, annotation: AnnotationRange) -> str:

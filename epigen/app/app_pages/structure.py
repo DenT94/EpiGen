@@ -91,9 +91,11 @@ def _render(
     # st.html(..., unsafe_allow_javascript=True) silently drops py2Dmol's ~100KB inline
     # rendering script when it re-executes scripts client-side (only small scripts survive,
     # so the control panel chrome renders but the actual WebGL viewer never populates -- an
-    # empty canvas). An iframe srcdoc via components.v1.html has no such limit; confirmed
-    # via a live DOM inspection (the big script tag was simply absent from the page).
-    st.components.v1.html(html, height=height, scrolling=False)
+    # empty canvas). An iframe srcdoc has no such limit; confirmed via a live DOM inspection
+    # (the big script tag was simply absent from the page). st.iframe (the non-deprecated
+    # replacement for st.components.v1.html, removed after 2026-06-01) uses the same
+    # srcdoc mechanism for an HTML-string src, so this keeps that fix.
+    st.iframe(html, height=height)
 
 
 def _legend(*, edit: bool = True, compensatory: bool = False) -> None:

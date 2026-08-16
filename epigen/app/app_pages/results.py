@@ -139,6 +139,56 @@ st.dataframe(
     },
 )
 
+st.subheader(":material/science: Export oligo library", divider="gray")
+st.caption(
+    "Step 6: tile each candidate's coding sequence into overlapping, synthesis-ready "
+    "fragments (mypipelinethoughts.md's OLIGO_LEN/OVERLAP_LEN). Candidates with no "
+    "`nt_sequence` (Evo2 was off for this run) are skipped."
+)
+from epigen.pipeline.library import OLIGO_LEN, OVERLAP_LEN, build_library, to_csv_rows, to_fasta
+
+with st.container(horizontal=True):
+    oligo_len = st.number_input("Oligo length (nt)", min_value=20, value=OLIGO_LEN)
+    overlap_len = st.number_input("Overlap (nt)", min_value=0, max_value=int(oligo_len) - 1, value=OVERLAP_LEN)
+
+library_fragments, skipped_candidates = build_library(
+    result.mcmc_candidates, oligo_len=int(oligo_len), overlap_len=int(overlap_len)
+)
+if skipped_candidates:
+    st.caption(f"{len(skipped_candidates)} candidate(s) skipped -- no coding sequence to tile.")
+if not library_fragments:
+    st.caption("No candidates with a coding sequence -- nothing to export.")
+else:
+    csv_rows = to_csv_rows(library_fragments)
+    st.caption(
+        f"{len(library_fragments)} fragment(s) across "
+        f"{len(result.mcmc_candidates) - len(skipped_candidates)} candidate(s)."
+    )
+    st.dataframe(csv_rows, width="stretch")
+    with st.container(horizontal=True):
+        st.download_button(
+            "Download FASTA",
+            to_fasta(library_fragments),
+            file_name="epigen_library.fasta",
+            mime="text/x-fasta",
+            icon=":material/download:",
+        )
+
+        import csv
+        import io
+
+        csv_buffer = io.StringIO()
+        writer = csv.DictWriter(csv_buffer, fieldnames=list(csv_rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(csv_rows)
+        st.download_button(
+            "Download CSV",
+            csv_buffer.getvalue(),
+            file_name="epigen_library.csv",
+            mime="text/csv",
+            icon=":material/download:",
+        )
+
 if result.top_candidate is None:
     st.warning("No candidates produced -- nothing to refold or diff.", icon=":material/warning:")
 else:
@@ -271,9 +321,11 @@ else:
                         html = render_structure_html(tc.folded.structure, color_map, chain_id=chain_id)
                         # st.html(..., unsafe_allow_javascript=True) silently drops py2Dmol's
                         # ~100KB inline rendering script when it re-executes scripts client-side
-                        # (only the small ones survive) -- an iframe srcdoc via components.v1.html
-                        # has no such re-execution/size limit. See structure.py's `_render`.
-                        st.components.v1.html(html, height=480, scrolling=False)
+                        # (only the small ones survive) -- an iframe srcdoc has no such
+                        # re-execution/size limit. st.iframe (the non-deprecated replacement for
+                        # st.components.v1.html, removed after 2026-06-01) uses the same srcdoc
+                        # mechanism for an HTML-string src. See structure.py's `_render`.
+                        st.iframe(html, height=480)
                     else:
                         st.caption(
                             "Structural coloring is only available for the top candidate "

@@ -102,7 +102,21 @@ def resolve_accession(sequence: str, pdb_id: str | None = None) -> str | None:
     publicly (not just used internally by `get_annotations`) so a caller like
     `literature.papers.attach_papers` can get the same accession without a second,
     possibly-divergent resolution.
+
+    Disk-cached by `(pdb_id, sequence)` (`literature.cache.load_accession`/
+    `save_accession`) -- this resolution is a property of the protein, not of any
+    particular pipeline run, so it's cached permanently and independently of
+    `st.cache_data` (see that module's docstring for why).
     """
+    cache_hit, cached_accession = cache.load_accession(pdb_id, sequence)
+    if cache_hit:
+        return cached_accession
+    accession = _resolve_accession_uncached(sequence, pdb_id)
+    cache.save_accession(pdb_id, sequence, accession)
+    return accession
+
+
+def _resolve_accession_uncached(sequence: str, pdb_id: str | None) -> str | None:
     if pdb_id is not None:
         rows = run_protein_sql(
             "SELECT DISTINCT uniprot_accession FROM pdb_v.polymer_entities "

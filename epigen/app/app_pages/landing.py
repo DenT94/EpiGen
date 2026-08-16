@@ -35,13 +35,22 @@ with st.form("run_form"):
 
     col1, col2 = st.columns(2)
     with col1:
-        edit_start = st.number_input("Edit start position (1-indexed)", min_value=1, value=1)
+        edit_start = st.number_input(
+            "Edit start position (1-indexed)",
+            min_value=1,
+            value=None,
+            placeholder="e.g. 20",
+            help="Required -- there's no meaningful default edit position for an arbitrary "
+            "WT sequence, so this starts blank rather than silently defaulting to 1.",
+        )
         edit_sequence = st.text_input(
             "Edit sequence",
-            value="A",
-            help="Amino acid sequence to substitute in, starting at the edit start position. "
-            "A single letter is a normal one-residue substitution; a longer string "
-            "(e.g. 'WHSPRAL') replaces that many consecutive residues.",
+            value="",
+            placeholder="e.g. WHSPRAL",
+            help="Required. Amino acid sequence to substitute in, starting at the edit start "
+            "position. A single letter is a normal one-residue substitution; a longer string "
+            "(e.g. 'WHSPRAL') replaces that many consecutive residues. Starts blank rather "
+            "than defaulting to a real (if trivial) edit you might submit by accident.",
         )
     with col2:
         use_full_window = st.checkbox(
@@ -81,6 +90,9 @@ with st.form("run_form"):
 
 if submitted:
     edit_sequence_clean = edit_sequence.strip().upper()
+    if edit_start is None or not edit_sequence_clean:
+        st.error("Edit start position and edit sequence are both required.", icon=":material/error:")
+        st.stop()
     edit_positions = list(range(int(edit_start), int(edit_start) + len(edit_sequence_clean)))
     if use_full_window:
         window_positions = [p for p in range(1, len(wt_sequence.strip()) + 1) if p not in edit_positions]
