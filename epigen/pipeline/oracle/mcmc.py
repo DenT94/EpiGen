@@ -55,26 +55,36 @@ def window_score(
     pmpnn_scores: PositionScores,
     weight_esm2: float,
     weight_pmpnn: float,
+    *,
+    evo2_term: float = 0.0,
+    weight_evo2: float = 0.0,
 ) -> float:
     """Sum of the weighted per-position AA score over `window_positions`, for the AA
-    actually present at each position in `sequence`.
+    actually present at each position in `sequence`, plus Evo2's window-restricted term
+    when the caller has one.
 
     Public (not `_window_score`) so a caller with its own `esm2_scores`/`pmpnn_scores`
     tables -- e.g. the ones `orchestrate.py` already computes once for the oracle
     sanity checks -- can score an arbitrary sequence (WT, an MCMC chain's starting or
-    ending point, ...) at zero extra Modal cost, using the ESM2+ProteinMPNN portion of
-    what the search itself optimizes. Evo2's contribution isn't in this function --
-    see `oracle.evo2_scoring.window_log_prob_batch` for the equivalent window-restricted
-    Evo2 term -- because unlike `esm2_scores`/`pmpnn_scores`, it can't be computed once
-    and reused across arbitrary sequences (Evo2 is autoregressive; its table is only
-    valid for the exact sequence it was computed on), so there's no single cached table
-    a caller here could reuse for free the way this function's other two arguments are.
+    ending point, ...) at zero extra Modal cost for the ESM2+ProteinMPNN portion.
+
+    `evo2_term`/`weight_evo2` default to 0.0/0.0 (Evo2 excluded) because unlike
+    `esm2_scores`/`pmpnn_scores`, Evo2's contribution can't be computed once and reused
+    across arbitrary sequences -- it's autoregressive, so a logits table is only valid
+    for the exact sequence it was computed on (see
+    `oracle.evo2_scoring.window_log_prob_batch`, which a caller batches separately over
+    however many sequences it has, then passes each sequence's own term in here). This
+    is now the single function both `run_mcmc_search`'s `combined_score` and any
+    post-hoc caller (`orchestrate.py`'s `wt_score`/`chain_starting_scores`/
+    `chain_ending_scores`) use, instead of each caller separately bolting
+    `weight_evo2 * evo2_term` on afterward and risking the two formulas drifting apart.
     """
     total = 0.0
     for pos in window_positions:
         aa = sequence[pos - 1]
         total += weight_esm2 * esm2_scores[pos - 1].get(aa, float("-inf"))
         total += weight_pmpnn * pmpnn_scores[pos - 1].get(aa, float("-inf"))
+    total += weight_evo2 * evo2_term
     return total
 
 
@@ -106,6 +116,8 @@ class MCMCSearchResult:
     candidates: list[MCMCCandidate]  # top candidate_num unique sequences, existing behavior
     starting_sequences: list[str]  # one per chain (num_starting_points * chains_per_start), pre-round-loop
     ending_sequences: list[str]  # one per chain, same order, after all `steps` rounds
+    starting_nt_sequences: list[str | None]  # one per chain, same order as starting_sequences; None when Evo2 unused
+    ending_nt_sequences: list[str | None]  # one per chain, same order as ending_sequences; None when Evo2 unused
     wt_score: float  # edit-only baseline `window_score`, the per-chain freeze threshold (see run_mcmc_search)
     rounds_run: int  # rounds actually executed before hitting `steps` or every chain freezing, whichever first
     converged_chain_count: int  # chains that froze (score > wt_score) before `steps` was reached
@@ -237,9 +249,9 @@ def run_mcmc_search(
             window_log_prob_batch([c.nt_sequence for c in chains], window_positions) if use_evo2 else [0.0] * len(chains)
         )
         for chain, esm2_scores, pmpnn_scores, evo2_score in zip(chains, esm2_batch, pmpnn_batch, evo2_batch, strict=True):
-            chain.score = (
-                window_score(chain.sequence, window_positions, esm2_scores, pmpnn_scores, weight_esm2, weight_pmpnn)
-                + weight_evo2 * evo2_score
+            chain.score = window_score(
+                chain.sequence, window_positions, esm2_scores, pmpnn_scores, weight_esm2, weight_pmpnn,
+                evo2_term=evo2_score, weight_evo2=weight_evo2,
             )
 
         best_score_by_sequence = {c.sequence: c.score for c in chains}
@@ -260,6 +272,20 @@ def run_mcmc_search(
             _save_checkpoint(checkpoint_dir, 0, chains, active, best_score_by_sequence, best_nt_by_sequence, starting_sequences_per_chain, wt_score, window_positions, use_evo2)
             if on_checkpoint is not None:
                 on_checkpoint()
+
+    # Each chain's nt sequence at its starting point, re-derived the same deterministic way
+    # regardless of whether this call started fresh or resumed from a checkpoint (which
+    # doesn't itself store per-chain starting nt sequences) -- `folded.sequence`'s chain
+    # reuses the caller's real `nt_sequence`; every warm start re-derives its own via
+    # `_reverse_translate_matching`, exactly as line ~222 above does when building `chains`
+    # in the first place, so this is guaranteed to match. Lets `orchestrate.py` recompute a
+    # window_score with a real Evo2 term for the starting-point histogram bars, not just
+    # the ESM2+ProteinMPNN portion.
+    starting_nt_sequences_per_chain = (
+        [nt_sequence if s == folded.sequence else _reverse_translate_matching(s) for s in starting_sequences_per_chain]
+        if use_evo2
+        else [None] * len(starting_sequences_per_chain)
+    )
 
     rounds_run = start_round
     for step_idx in range(start_round, steps):
@@ -286,9 +312,9 @@ def run_mcmc_search(
             active_indices, proposals, esm2_batch, pmpnn_batch, evo2_batch, nt_proposals or [None] * len(active_indices), strict=True
         ):
             chain = chains[i]
-            proposed_score = (
-                window_score(proposed_seq, window_positions, esm2_scores, pmpnn_scores, weight_esm2, weight_pmpnn)
-                + weight_evo2 * evo2_score
+            proposed_score = window_score(
+                proposed_seq, window_positions, esm2_scores, pmpnn_scores, weight_esm2, weight_pmpnn,
+                evo2_term=evo2_score, weight_evo2=weight_evo2,
             )
             delta = proposed_score - chain.score
             accept = delta >= 0 or chain.rng.random() < pow(2.718281828, delta / temperature)
@@ -309,6 +335,7 @@ def run_mcmc_search(
                 on_checkpoint()
 
     ending_sequences_per_chain = [c.sequence for c in chains]
+    ending_nt_sequences_per_chain = [c.nt_sequence for c in chains]
     converged_chain_count = sum(1 for is_active in active if not is_active)
     ranked = sorted(best_score_by_sequence.items(), key=lambda kv: kv[1], reverse=True)
 
@@ -321,6 +348,8 @@ def run_mcmc_search(
             ],
             starting_sequences=starting_sequences_per_chain,
             ending_sequences=ending_sequences_per_chain,
+            starting_nt_sequences=starting_nt_sequences_per_chain,
+            ending_nt_sequences=ending_nt_sequences_per_chain,
             wt_score=wt_score,
             rounds_run=rounds_run,
             converged_chain_count=converged_chain_count,
@@ -343,6 +372,8 @@ def run_mcmc_search(
         ],
         starting_sequences=starting_sequences_per_chain,
         ending_sequences=ending_sequences_per_chain,
+        starting_nt_sequences=starting_nt_sequences_per_chain,
+        ending_nt_sequences=ending_nt_sequences_per_chain,
         wt_score=wt_score,
         rounds_run=rounds_run,
         converged_chain_count=converged_chain_count,

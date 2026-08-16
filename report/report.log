@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=pdflatex 2025.3.8)  15 AUG 2026 19:28
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=pdflatex 2025.3.8)  15 AUG 2026 19:34
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -418,16 +418,16 @@ LaTeX Font Info:    Font shape `OT1/cmtt/bx/n' in size <10.95> not available
 [1
 
 {/usr/local/texlive/2025/texmf-var/fonts/map/pdftex/updmap/pdftex.map}]
-Overfull \hbox (0.61353pt too wide) in paragraph at lines 53--66
-\OT1/cmtt/m/n/10.95 oracle/evo2[]scoring.py \OT1/cmr/m/n/10.95 sim-ply never as
-ks for them, only ever read-ing \OT1/cmtt/m/n/10.95 avg[]log[]likelihood\OT1/cm
-r/m/n/10.95 .
+Overfull \hbox (75.24869pt too wide) in paragraph at lines 53--68
+\OT1/cmtt/m/n/10.95 combined[]score\OT1/cmr/m/n/10.95 . \OT1/cmtt/m/n/10.95 win
+dow[]log[]prob[]batch \OT1/cmr/m/n/10.95 (new) in-stead re-quests \OT1/cmtt/m/n
+/10.95 Evo2ScoringConfig.return[]logits=True
  []
 
 LaTeX Font Info:    Font shape `OT1/cmtt/bx/n' in size <14.4> not available
-(Font)              Font shape `OT1/cmtt/m/n' tried instead on input line 73.
+(Font)              Font shape `OT1/cmtt/m/n' tried instead on input line 75.
 
-Overfull \hbox (0.37479pt too wide) in paragraph at lines 103--109
+Overfull \hbox (0.37479pt too wide) in paragraph at lines 106--112
 []\OT1/cmtt/m/n/10.95 window[]score \OT1/cmr/m/n/10.95 is a \OT1/cmr/m/it/10.95
  pub-lic \OT1/cmr/m/n/10.95 func-tion specif-i-cally so a caller hold-ing its o
 wn \OT1/cmtt/m/n/10.95 esm2[]scores\OT1/cmr/m/n/10.95 /\OT1/cmtt/m/n/10.95 pmpn
@@ -438,137 +438,160 @@ n[]scores
 
 [2{/usr/local/texlive/2025/texmf-dist/fonts/enc/dvips/cm-super/cm-super-ts1.enc
 }]
-Overfull \hbox (10.68364pt too wide) in paragraph at lines 140--147
-\OT1/cmr/m/n/10.95 quence was sup-plied (\OT1/cmtt/m/n/10.95 orchestrate.py\OT1
-/cmr/m/n/10.95 's \OT1/cmtt/m/n/10.95 use[]evo2\OT1/cmr/m/n/10.95 , \OT1/cmr/bx
-/n/10.95 de-fault \OT1/cmtt/m/n/10.95 True\OT1/cmr/m/n/10.95 ). When Evo2 is of
-f, \OT1/cmtt/m/n/10.95 combined[]score
- []
-
-
-Overfull \hbox (18.68324pt too wide) in paragraph at lines 154--154
+Overfull \hbox (18.68324pt too wide) in paragraph at lines 178--178
 []\OT1/cmr/bx/n/14.4 The or-a-cle san-ity checks: \OT1/cmtt/m/n/14.4 expert[]co
 rrelation \OT1/cmr/bx/n/14.4 and \OT1/cmtt/m/n/14.4 fraction[]below[]wt 
  []
 
 
-Overfull \hbox (17.22838pt too wide) in paragraph at lines 169--175
+
+[3]
+Overfull \hbox (17.22838pt too wide) in paragraph at lines 193--199
 []\OT1/cmr/m/n/10.95 Fraction of (po-si-tion, amino acid) sub-sti-tu-tions whos
 e $\OML/cmm/m/it/10.95 w[][] \OT1/cmr/m/n/10.95 + \OML/cmm/m/it/10.95 w[][]$
  []
 
 
-Underfull \hbox (badness 3503) in paragraph at lines 182--182
+Underfull \hbox (badness 3503) in paragraph at lines 206--206
 []\OT1/cmr/bx/n/10.95 Inconsistency: \OT1/cmr/m/n/10.95 Both func-tions take a 
 pa-ram-e-ter lit-er-ally named \OT1/cmtt/m/n/10.95 wt[]sequence\OT1/cmr/m/n/10.
 95 , but
  []
 
 
-
-[3]
-Underfull \hbox (badness 10000) in paragraph at lines 196--196
+Underfull \hbox (badness 10000) in paragraph at lines 220--220
 []\OT1/cmtt/m/n/10.95 oracle/mcmc.py\OT1/cmr/m/n/10.95 , in-side
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 197--197
+Underfull \hbox (badness 10000) in paragraph at lines 221--221
 \OT1/cmr/m/n/10.95 start-ing chain (\OT1/cmtt/m/n/10.95 window[]score +
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 197--198
+Underfull \hbox (badness 10000) in paragraph at lines 221--221
+\OT1/cmtt/m/n/10.95 w[]evo2*window[]log[]prob[]batch\OT1/cmr/m/n/10.95 ,
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 221--222
 []\OT1/cmtt/m/n/10.95 window[]score \OT1/cmr/m/n/10.95 only, hard-coded
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 199--200
+Underfull \hbox (badness 10000) in paragraph at lines 223--224
 []\OT1/cmr/m/n/10.95 Yes, this is what
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 199--200
+Underfull \hbox (badness 10000) in paragraph at lines 223--224
 \OT1/cmtt/m/n/10.95 plot[]score[]comparison \OT1/cmr/m/n/10.95 ac-tu-
  []
 
 
-Overfull \hbox (5.21294pt too wide) in paragraph at lines 192--202
+Overfull \hbox (5.21294pt too wide) in paragraph at lines 216--226
  [] 
  []
 
 
 
 [4]
-Overfull \hbox (62.04082pt too wide) in paragraph at lines 277--277
+Overfull \hbox (62.04082pt too wide) in paragraph at lines 301--301
 []\OT1/cmtt/m/n/10.95 correlation.expert[]agreement\OT1/cmr/m/n/10.95 /\OT1/cmt
 t/m/n/10.95 fraction[]below[]wt| 
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 278--278
+Underfull \hbox (badness 10000) in paragraph at lines 302--302
 []\OT1/cmtt/m/n/10.95 mcmc.run[]mcmc[]search\OT1/cmr/m/n/10.95 's in-ter-nal
  []
 
 
-Underfull \hbox (badness 1946) in paragraph at lines 279--280
+Underfull \hbox (badness 1946) in paragraph at lines 303--304
 []\OT1/cmr/m/n/10.95 Caller-supplied; \OT1/cmtt/m/n/10.95 results.py\OT1/cmr/m/
 n/10.95 /\OT1/cmtt/m/n/10.95 structure.py \OT1/cmr/m/n/10.95 now cor-
  []
 
 
-Overfull \hbox (11.99998pt too wide) in paragraph at lines 273--282
+Overfull \hbox (11.99998pt too wide) in paragraph at lines 297--306
  [] 
- []
-
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 292.
-
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `\Delta' on input line 292.
-
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `\Delta' on input line 292.
-
-
-Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `math shift' on input line 292.
-
-
-Underfull \hbox (badness 10000) in paragraph at lines 314--314
-[]\OT1/cmtt/m/n/10.95 combined[]score \OT1/cmr/m/n/10.95 (can-di-
- []
-
-
-Overfull \hbox (10.57674pt too wide) in paragraph at lines 315--315
-[]\OT1/cmtt/m/n/10.95 MCMCSearchResult.wt[]score
- []
-
-
-Underfull \hbox (badness 10000) in paragraph at lines 316--316
-[]\OT1/cmtt/m/n/10.95 EndToEndResult.wt[]score
- []
-
-
-Underfull \hbox (badness 10000) in paragraph at lines 317--317
-\OT1/cmr/m/n/10.95 MPNN agree-
- []
-
-
-Underfull \hbox (badness 10000) in paragraph at lines 317--317
-\OT1/cmr/m/n/10.95 ment, not a
- []
-
-
-Underfull \hbox (badness 3179) in paragraph at lines 319--319
-[]\OT1/cmr/m/n/10.95 N/A (dif-fer-ent
  []
 
 
 
 [5]
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 316.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `\Delta' on input line 316.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `\Delta' on input line 316.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 316.
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 338--338
+[]\OT1/cmtt/m/n/10.95 combined[]score \OT1/cmr/m/n/10.95 (can-di-
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 338--338
+[]\OT1/cmr/m/n/10.95 Yes, if en-
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 338--338
+\OT1/cmr/m/n/10.95 abled (de-fault
+ []
+
+
+Underfull \hbox (badness 2680) in paragraph at lines 338--338
+\OT1/cmr/m/n/10.95 on), \OT1/cmr/bx/n/10.95 window-
+ []
+
+
+Underfull \hbox (badness 1694) in paragraph at lines 338--338
+\OT1/cmr/bx/n/10.95 restricted \OT1/cmr/m/n/10.95 (as
+ []
+
+
+Overfull \hbox (10.57674pt too wide) in paragraph at lines 339--339
+[]\OT1/cmtt/m/n/10.95 MCMCSearchResult.wt[]score
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 339--339
+[]\OT1/cmr/m/n/10.95 Yes, if en-
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 340--340
+[]\OT1/cmtt/m/n/10.95 EndToEndResult.wt[]score
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 341--341
+\OT1/cmr/m/n/10.95 MPNN agree-
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 341--341
+\OT1/cmr/m/n/10.95 ment, not a
+ []
+
+
+Underfull \hbox (badness 3179) in paragraph at lines 343--343
+[]\OT1/cmr/m/n/10.95 N/A (dif-fer-ent
+ []
+
+
 
 [6] (./report.aux)
  ***********
@@ -581,11 +604,11 @@ Package rerunfilecheck Info: File `report.out' has not changed.
 Here is how much of TeX's memory you used:
  11265 strings out of 473190
  171091 string characters out of 5715801
- 594693 words of memory out of 5000000
+ 593693 words of memory out of 5000000
  34382 multiletter control sequences out of 15000+600000
  567332 words of font info for 67 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
- 75i,9n,79p,520b,521s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 75i,9n,79p,520b,498s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb
 ></usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx12.pfb>
 </usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb><
@@ -601,10 +624,10 @@ ive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmti10.pfb></usr/local/texli
 ve/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmtt10.pfb></usr/local/texliv
 e/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmtt12.pfb></usr/local/texlive
 /2025/texmf-dist/fonts/type1/public/cm-super/sfrm1095.pfb>
-Output written on report.pdf (6 pages, 203133 bytes).
+Output written on report.pdf (6 pages, 205092 bytes).
 PDF statistics:
- 172 PDF objects out of 1000 (max. 8388607)
- 132 compressed objects within 2 object streams
+ 175 PDF objects out of 1000 (max. 8388607)
+ 135 compressed objects within 2 object streams
  26 named destinations out of 1000 (max. 500000)
  65 words of extra memory for PDF output out of 10000 (max. 10000000)
 

@@ -50,19 +50,21 @@ a whole candidate sequence.
     structure}, $P(\text{aa}_i \mid \text{structure}, \text{context})$.
     Already single-pass (autoregressive teacher-forcing), no approximation
     needed.
-  \item[Evo2] (\texttt{oracle/evo2\_scoring.py}) --- called here for one
-    scalar \texttt{avg\_log\_likelihood} per \emph{whole nucleotide
-    sequence} (causal: mean of $P(x_t \mid x_{<t})$ over the sequence).
-    Operates on DNA, not protein --- the AA sequence is reverse-translated
-    to nt via \texttt{oracle/codon.py}, and every accepted AA substitution
-    during the search updates the corresponding codon.
-    \textbf{Evo2 can in fact return per-position logits}
-    (\texttt{Evo2ScoringConfig.return\_logits=True} $\to$ a
-    \texttt{(seq\_len, vocab\_size)} table, the same shape ESM2/ProteinMPNN
-    already return) --- \texttt{oracle/evo2\_scoring.py} simply never asks
-    for them, only ever reading \texttt{avg\_log\_likelihood}. See the note
-    at the end of Section~\ref{sec:window} for why that's not a trivial gap
-    to close.
+  \item[Evo2] (\texttt{oracle/evo2\_scoring.py}) --- operates on DNA, not
+    protein: the AA sequence is reverse-translated to nt via
+    \texttt{oracle/codon.py}, and every accepted AA substitution during the
+    search updates the corresponding codon. Two functions now exist here.
+    \texttt{nt\_sequence\_score\_batch} gives one scalar
+    \texttt{avg\_log\_likelihood} per \emph{whole nucleotide sequence}
+    (causal: mean of $P(x_t \mid x_{<t})$ over the sequence) --- this was,
+    until this revision, the only thing Evo2 contributed to
+    \texttt{combined\_score}. \texttt{window\_log\_prob\_batch} (new) instead
+    requests \texttt{Evo2ScoringConfig.return\_logits=True} --- a
+    \texttt{(seq\_len, vocab\_size)} per-nucleotide table, the same shape
+    ESM2/ProteinMPNN already return --- and sums only the log-probability
+    Evo2 assigned to the nucleotide actually present at each codon of the
+    window's AA positions. \texttt{combined\_score} (Section~\ref{sec:combined})
+    now uses this window-restricted version.
 \end{description}
 
 Both ESM2 and ProteinMPNN expose \texttt{\_batch} variants that score many
@@ -93,38 +95,42 @@ Two properties matter:
     every other unchanged residue contribute an identical constant to every
     candidate's score, so they cancel out of any accept/reject comparison
     and are simply omitted.
-  \item \textbf{Evo2 is not in it} --- not because it \emph{can't} be (see
-    the correction above: it can return a per-position table too), but
-    because the codebase doesn't currently fetch or use that table. It is
-    instead added as a separate whole-sequence additive term wherever the
-    full search objective is needed (Section~\ref{sec:combined}).
+  \item \textbf{Evo2 is not literally inside this function}, but (as of this
+    revision) it gets the equivalent window-restricted treatment via
+    \texttt{oracle.evo2\_scoring.window\_log\_prob\_batch}, added as a
+    separate term wherever the full search objective is needed
+    (Section~\ref{sec:combined}) rather than merged into this function's own
+    per-AA-position dict.
 \end{itemize}
 
 \texttt{window\_score} is a \emph{public} function specifically so a caller
 holding its own \texttt{esm2\_scores}/\texttt{pmpnn\_scores} tables (e.g.\
 ones already spent on the oracle sanity checks, Section~\ref{sec:sanity}) can
 score an arbitrary sequence --- WT, a chain's starting point, a chain's
-ending point --- at zero extra Modal cost, using the exact formula the search
-itself optimizes minus the Evo2 term.
+ending point --- at zero extra Modal cost, using the ESM2+ProteinMPNN portion
+of what the search itself optimizes.
 
-\paragraph{Could Evo2's per-position logits be folded into \texttt{window\_score} the same way?}
-Not as a direct drop-in, for two reasons. First, a \emph{vocabulary}
-mismatch: Evo2's logits are over its nucleotide vocabulary, not the 20-AA
-\texttt{CANONICAL\_AA} vocabulary \texttt{window\_score} sums over --- using
-them at an amino-acid position would mean aggregating each codon's 3
-nucleotide log-probs into one per-AA-position value first (mechanically
-possible via \texttt{oracle/codon.py}'s existing AA-position $\leftrightarrow$
-codon-triplet mapping, but real work, not a rename). Second, and more
-fundamentally, Evo2 is \emph{autoregressive}: its logit at position $t$ is
-conditioned on everything before $t$, unlike ESM2's single-pass
-approximation or ProteinMPNN's structure-conditioning, neither of which has
-that directional dependency. A table computed once on \texttt{edit\_only}
-would be systematically wrong for any candidate that differs from
-\texttt{edit\_only} \emph{upstream} of a given window position --- so even
-with \texttt{return\_logits=True}, reusing one cached table across arbitrary
-candidates the way \texttt{window\_score} currently reuses the ESM2/
-ProteinMPNN tables would not be correct without more care (at minimum,
-re-fetching Evo2 logits per candidate rather than reusing one shared table).
+\paragraph{Why isn't Evo2 merged directly into \texttt{window\_score}?}
+Two reasons, both still true even now that Evo2's contribution is
+window-restricted. First, a \emph{vocabulary} mismatch: Evo2's logits are
+over its nucleotide vocabulary, not the 20-AA \texttt{CANONICAL\_AA}
+vocabulary \texttt{window\_score} sums over --- \texttt{window\_log\_prob\_batch}
+aggregates each codon's 3 nucleotide log-probs into one per-AA-position value
+via \texttt{oracle/codon.py}'s AA-position $\leftrightarrow$ codon-triplet
+mapping, but that's a different-shaped computation from a lookup into a
+plain per-AA table, not a rename. Second, and more fundamentally, Evo2 is
+\emph{autoregressive}: its logit at position $t$ is conditioned on
+everything before $t$, unlike ESM2's single-pass approximation or
+ProteinMPNN's structure-conditioning, neither of which has that directional
+dependency. A table computed once on \texttt{edit\_only} would be
+systematically wrong for any candidate that differs from \texttt{edit\_only}
+\emph{upstream} of a given window position --- so unlike
+\texttt{esm2\_scores}/\texttt{pmpnn\_scores}, there is no single cached Evo2
+table a caller could reuse for free across arbitrary sequences the way this
+function's other two arguments already are. \texttt{window\_log\_prob\_batch}
+is instead called fresh per batch of actual candidates, exactly like
+\texttt{nt\_sequence\_score\_batch} already was --- same call pattern, no
+new Modal cost, just a different sum over the same returned data.
 
 \section{\texttt{combined\_score}: what the search actually optimizes}
 \label{sec:combined}
@@ -134,10 +140,10 @@ The number shown in the ``MCMC candidates'' table
 accepts/rejects on is:
 
 \begin{equation}
-  \texttt{combined\_score}(s) = \texttt{window\_score}(s) \;+\; w_{\text{evo2}} \cdot \text{Evo2}(s)
+  \texttt{combined\_score}(s) = \texttt{window\_score}(s) \;+\; w_{\text{evo2}} \cdot \texttt{window\_log\_prob\_batch}(s)
 \end{equation}
 
-$\text{Evo2}(s)$ is only computed (and only added) when Evo2 scoring is
+The Evo2 term is only computed (and only added) when Evo2 scoring is
 enabled, i.e.\ when a nucleotide sequence was supplied
 (\texttt{orchestrate.py}'s \texttt{use\_evo2}, \textbf{default
 \texttt{True}}). When Evo2 is off, \texttt{combined\_score} \emph{is}
@@ -145,11 +151,29 @@ enabled, i.e.\ when a nucleotide sequence was supplied
 looked from the outside like ``the score'' was always just ESM2+ProteinMPNN.
 With Evo2 on (the default), they are not the same number.
 
+\textbf{As of this revision}, all three experts contributing to
+\texttt{combined\_score} are genuinely window-restricted --- before, Evo2's
+term was a whole-nt-sequence average that diluted the window-position signal
+with every unchanged position elsewhere in the sequence (see
+Section~\ref{sec:window}'s ``Why isn't Evo2 merged directly'' note for how
+this was fixed). This makes \texttt{combined\_score} more internally
+consistent than it was, but does \emph{not} by itself resolve the
+\texttt{wt\_score} collision in Section~\ref{sec:collision} --- the search's
+own \texttt{wt\_score} still numerically differs from
+\texttt{EndToEndResult.wt\_score} whenever Evo2 is on, since the latter is
+still deliberately Evo2-free (Section~\ref{sec:collision} explains why: no
+free, reusable per-sequence Evo2 table exists for the same reason
+\texttt{window\_score} can't merge Evo2 in directly).
+
 \warnbox{Every docstring/UI caption I wrote for the results-page histogram
 says ``ESM2+ProteinMPNN, Evo2 excluded'' --- that's accurate for what the
 histogram plots, but it made it look like Evo2 wasn't part of the pipeline at
-all. It \emph{is} part of \texttt{combined\_score}, by default. Only the
-free, no-extra-Modal-call comparison plot excludes it.}
+all, or that it categorically \emph{couldn't} be scored per-position. Neither
+is true: it \emph{is} part of \texttt{combined\_score} by default, and (as of
+this revision) genuinely window-restricted there too. Only the free,
+no-extra-Modal-call comparison plot excludes it, because there's no single
+cached table to reuse across sequences the way \texttt{esm2\_scores}/
+\texttt{pmpnn\_scores} are reused.}
 
 \section{The oracle sanity checks: \texttt{expert\_correlation} and \texttt{fraction\_below\_wt}}
 \label{sec:sanity}
@@ -194,7 +218,7 @@ different files, by two different sessions, for two different purposes:
  & \texttt{MCMCSearchResult.wt\_score} & \texttt{EndToEndResult.wt\_score} \\
 \midrule
 \textbf{Where computed} & \texttt{oracle/mcmc.py}, inside \texttt{run\_mcmc\_search}, at round 0 & \texttt{orchestrate.py}, separately, after the search returns \\
-\textbf{Formula} & \texttt{combined\_score} of the unmutated starting chain (\texttt{window\_score + w\_evo2*Evo2} if Evo2 enabled) & \texttt{window\_score} only, hardcoded weights $0.5/0.5$, \textbf{no Evo2 term ever} \\
+\textbf{Formula} & \texttt{combined\_score} of the unmutated starting chain (\texttt{window\_score + w\_evo2*window\_log\_prob\_batch}, window-restricted, if Evo2 enabled) & \texttt{window\_score} only, hardcoded weights $0.5/0.5$, \textbf{no Evo2 term ever} \\
 \textbf{Used for} & Per-chain \emph{freeze threshold}: a chain stops proposing further mutations once its score exceeds this (early stopping / convergence) & The dashed vertical reference line on the results-page starting/ending-score histogram \\
 \textbf{Currently wired to UI?} & No --- \texttt{orchestrate.py} does not read this field at all & Yes, this is what \texttt{plot\_score\_comparison} actually draws \\
 \bottomrule
@@ -311,8 +335,8 @@ the same thing.
 Quantity & Includes Evo2? & Where \\
 \midrule
 \texttt{window\_score} & No & \texttt{oracle/mcmc.py} \\
-\texttt{combined\_score} (candidates table) & Yes, if enabled (default on) & \texttt{oracle/mcmc.py} \\
-\texttt{MCMCSearchResult.wt\_score} (freeze threshold) & Yes, if enabled & \texttt{oracle/mcmc.py} \\
+\texttt{combined\_score} (candidates table) & Yes, if enabled (default on), \textbf{window-restricted} (as of this revision) & \texttt{oracle/mcmc.py} \\
+\texttt{MCMCSearchResult.wt\_score} (freeze threshold) & Yes, if enabled, window-restricted & \texttt{oracle/mcmc.py} \\
 \texttt{EndToEndResult.wt\_score} (histogram baseline) & \textbf{Never} & \texttt{orchestrate.py} \\
 \texttt{expert\_correlation} & N/A (ESM2 vs MPNN agreement, not a fitness score) & \texttt{oracle/correlation.py} \\
 \texttt{fraction\_below\_wt} & No & \texttt{oracle/correlation.py} \\

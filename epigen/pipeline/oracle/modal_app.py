@@ -175,6 +175,8 @@ def run_mcmc_search_remote(
         ],
         "starting_sequences": result.starting_sequences,
         "ending_sequences": result.ending_sequences,
+        "starting_nt_sequences": result.starting_nt_sequences,
+        "ending_nt_sequences": result.ending_nt_sequences,
         "wt_score": result.wt_score,
         "rounds_run": result.rounds_run,
         "converged_chain_count": result.converged_chain_count,
@@ -187,9 +189,13 @@ def run_mcmc_search_on_modal(folded, window_positions: list[int], **kwargs) -> d
     function from ordinary (non-Modal) Python, e.g. from `orchestrate.py`.
 
     Requires `modal deploy -e proto-env epigen/pipeline/oracle/modal_app.py`
-    to have been run (again, after this function's return shape changed from
-    a bare candidate list to a dict with "candidates"/"starting_sequences"/
-    "ending_sequences") before this actually returns the new shape.
+    to have been run (again, after this function's return shape changed --
+    most recently to add "starting_nt_sequences"/"ending_nt_sequences",
+    which `orchestrate.py` uses to give the chain-starting/ending histogram
+    bars a real Evo2 term instead of an implicit 0.0) before this actually
+    returns the new shape. Until redeployed, the live function's dict is
+    missing those two keys; `orchestrate.py` falls back to an Evo2-free
+    `window_score` for the bars in that case rather than raising.
 
     Pass `run_id` explicitly (forwarded via `**kwargs`) to force a fresh
     search instead of resuming a same-config run's checkpoint -- see

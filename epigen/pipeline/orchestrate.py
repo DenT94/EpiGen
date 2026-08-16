@@ -29,10 +29,12 @@ from epigen.pipeline.fold_invert_refold.run import (
 )
 from epigen.pipeline.fold_invert_refold.structure_source import get_structure
 from epigen.pipeline.literature import AnnotationRange, flag_positions, get_annotations
-from epigen.pipeline.oracle.codon import apply_aa_substitutions_to_nt, reverse_translate
+from epigen.pipeline.oracle.codon import apply_aa_substitutions_to_nt
 from epigen.pipeline.oracle.correlation import expert_agreement, fraction_below_wt
+from epigen.pipeline.oracle.evo2_scoring import window_log_prob_batch
 from epigen.pipeline.oracle.mcmc import MCMCCandidate, run_mcmc_search, window_score
 from epigen.pipeline.oracle.modal_app import run_mcmc_search_on_modal
+from epigen.pipeline.oracle.nt_resolution import resolve_wt_nt_sequence
 from epigen.pipeline.oracle.scoring import position_scores_esm2, position_scores_proteinmpnn
 from epigen.pipeline.sae_diff.run import ThreeStateSAEDiff, diff_many_candidates
 
@@ -55,6 +57,7 @@ class EndToEndResult:
     wt_score: float  # edit_only's own window_score -- the baseline every chain score below is measured against
     chain_starting_scores: list[float]  # one per MCMC chain, window_score at its starting sequence
     chain_ending_scores: list[float]  # one per MCMC chain, same order, window_score at its final sequence
+    wt_nt_source: str | None  # "given"/"genbank"/"codonfm" (oracle.nt_resolution), or None when use_evo2=False
 
 
 def run_end_to_end(
@@ -97,12 +100,17 @@ def run_end_to_end(
             forwarded to `oracle.mcmc.run_mcmc_search`.
         seed: Shared seed threaded through every stochastic step, for
             reproducible runs.
-        wt_nt_sequence: Real coding sequence for `wt_sequence`, if known.
-            When omitted and `use_evo2=True`, one is generated via
-            `oracle.codon.reverse_translate` (a deterministic preferred-codon
-            table, not necessarily the real construct's codons -- see that
-            module's docstring). The fixed edit's codon is substituted the
-            same way MCMC substitutes codons for its own proposals.
+        wt_nt_sequence: Real coding sequence for `wt_sequence`, if known --
+            always trusted as-is when given. When omitted and `use_evo2=True`,
+            one is resolved via `oracle.nt_resolution.resolve_wt_nt_sequence`:
+            a real GenBank-deposited CDS when `original`'s resolved PDB entry
+            cross-references one that verifiably translates to `wt_sequence`,
+            otherwise a CodonFM-model-based reverse translation (see that
+            module and `oracle.codonfm_translate` for how each is verified).
+            Which source was actually used is reported back on
+            `EndToEndResult.wt_nt_source`. The fixed edit's codon is
+            substituted the same way MCMC substitutes codons for its own
+            proposals.
         use_evo2: Whether to score candidates with Evo2 (a third,
             DNA-level expert) alongside ESM2/ProteinMPNN. Requires the
             `evo2` proto-tools app to be deployed to Modal.
@@ -160,8 +168,11 @@ def run_end_to_end(
     below_wt = fraction_below_wt(esm2_scores, pmpnn_scores, edit_only.sequence, window_positions)
 
     edit_only_nt_sequence = None
+    wt_nt_source = None
     if use_evo2:
-        wt_nt = wt_nt_sequence or reverse_translate(wt_sequence)
+        wt_nt, wt_nt_source = resolve_wt_nt_sequence(
+            wt_sequence, wt_nt_sequence=wt_nt_sequence, pdb_id=original.pdb_id, seed=seed,
+        )
         edit_only_nt_sequence = apply_aa_substitutions_to_nt(wt_nt, edit_start, edit_sequence)
 
     if use_modal_mcmc:
@@ -190,6 +201,13 @@ def run_end_to_end(
         ]
         chain_starting_sequences = raw_result["starting_sequences"]
         chain_ending_sequences = raw_result["ending_sequences"]
+        # .get(...) with a None-filled fallback: only present once modal_app.py has been
+        # redeployed past the change that added these two keys (see run_mcmc_search_on_modal's
+        # docstring) -- until then, chain_starting_scores/chain_ending_scores below fall back
+        # to Evo2-free window_score for these, same as before this change.
+        chain_starting_nt_sequences = raw_result.get("starting_nt_sequences", [None] * len(chain_starting_sequences))
+        chain_ending_nt_sequences = raw_result.get("ending_nt_sequences", [None] * len(chain_ending_sequences))
+        search_wt_score = raw_result["wt_score"]
     else:
         mcmc_result = run_mcmc_search(
             edit_only,
@@ -207,6 +225,9 @@ def run_end_to_end(
         mcmc_candidates = mcmc_result.candidates
         chain_starting_sequences = mcmc_result.starting_sequences
         chain_ending_sequences = mcmc_result.ending_sequences
+        chain_starting_nt_sequences = mcmc_result.starting_nt_sequences
+        chain_ending_nt_sequences = mcmc_result.ending_nt_sequences
+        search_wt_score = mcmc_result.wt_score
 
     # The fixed edit must survive every candidate and every chain's start/end untouched --
     # `run_mcmc_search`'s round loop only ever proposes substitutions at `window_positions`,
@@ -228,19 +249,39 @@ def run_end_to_end(
                     "should be structurally impossible; see orchestrate.py's comment here."
                 )
 
-    # Free (no extra Modal call): score WT/chain starts/chain ends with the same
-    # ESM2+ProteinMPNN per-position tables already spent above on the oracle sanity
-    # checks. 0.5/0.5 matches run_mcmc_search's own (unexposed-here) default weights,
-    # so this is directly comparable to what the search itself optimized -- Evo2's
-    # whole-sequence term isn't included, since it isn't a per-position table (see
-    # oracle.mcmc.window_score's docstring).
-    wt_score = window_score(edit_only.sequence, window_positions, esm2_scores, pmpnn_scores, 0.5, 0.5)
-    chain_starting_scores = [
-        window_score(seq, window_positions, esm2_scores, pmpnn_scores, 0.5, 0.5) for seq in chain_starting_sequences
-    ]
-    chain_ending_scores = [
-        window_score(seq, window_positions, esm2_scores, pmpnn_scores, 0.5, 0.5) for seq in chain_ending_sequences
-    ]
+    # `wt_score` is the search's own baseline (MCMCSearchResult.wt_score / the Modal dict's
+    # "wt_score" key) -- the exact number each chain was actually frozen against -- rather
+    # than a second, separately-computed `window_score(edit_only.sequence, ...)` call here.
+    # The two used to be able to drift apart (e.g. this one being Evo2-free while the
+    # search's own included Evo2 when weight_evo2 was set), which is exactly the
+    # `wt_score` collision documented in report/report.tex; there is now only one number.
+    wt_score = search_wt_score
+
+    # chain_starting_scores/chain_ending_scores reuse the ESM2+ProteinMPNN tables already
+    # spent above on the oracle sanity checks (free), plus one extra batched Evo2 Modal call
+    # each for the window-restricted Evo2 term (window_score's evo2_term/weight_evo2), so
+    # these bars are on the exact same combined_score formula/scale as wt_score above instead
+    # of silently dropping Evo2 when weight_evo2 > 0. Falls back to Evo2-free (evo2_term=0.0,
+    # matching window_score's own default) per-sequence when a nt sequence isn't available --
+    # currently only the Modal path before modal_app.py has been redeployed past the change
+    # that added starting_nt_sequences/ending_nt_sequences (see run_mcmc_search_on_modal's
+    # docstring), since the laptop path (run_mcmc_search) always populates them now.
+    def _window_scores_with_evo2(sequences: list[str], nt_sequences: list[str | None]) -> list[float]:
+        evo2_terms: list[float]
+        if use_evo2 and all(nt is not None for nt in nt_sequences):
+            evo2_terms = window_log_prob_batch(nt_sequences, window_positions)
+        else:
+            evo2_terms = [0.0] * len(sequences)
+        return [
+            window_score(
+                seq, window_positions, esm2_scores, pmpnn_scores, 0.5, 0.5,
+                evo2_term=evo2_term, weight_evo2=weight_evo2,
+            )
+            for seq, evo2_term in zip(sequences, evo2_terms, strict=True)
+        ]
+
+    chain_starting_scores = _window_scores_with_evo2(chain_starting_sequences, chain_starting_nt_sequences)
+    chain_ending_scores = _window_scores_with_evo2(chain_ending_sequences, chain_ending_nt_sequences)
 
     top_candidate: RefoldedCandidate | None = None
     contact_deltas: list[NeighborDelta] = []
@@ -292,4 +333,5 @@ def run_end_to_end(
         wt_score=wt_score,
         chain_starting_scores=chain_starting_scores,
         chain_ending_scores=chain_ending_scores,
+        wt_nt_source=wt_nt_source,
     )
