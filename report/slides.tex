@@ -80,11 +80,13 @@
 \begin{frame}{Pipeline: fold $\to$ invert $\to$ refold $\to$ search}
   \begin{enumerate}
     \item Fold the edited sequence (ESMFold2), gate on pLDDT/PAE.
-    \item Inverse-fold to propose compensatory candidates (ProteinMPNN),
-      MCMC search over the whole scaffold minus the fixed edit.
-    \item Score every candidate with three independent experts: \textbf{ESM2}
-      (sequence LM), \textbf{ProteinMPNN} (structure-conditioned),
-      \textbf{Evo2} (DNA-level, causal) --- combined into one MCMC objective.
+    \item Inverse-fold (ProteinMPNN) diverse warm starts; MCMC then proposes
+      \emph{uniform-random} single-residue moves over the whole scaffold
+      minus the fixed edit --- the sampler itself is blind, not model-guided.
+    \item Accept/reject every proposal by a combined score from three
+      independent experts: \textbf{ESM2} (sequence LM), \textbf{ProteinMPNN}
+      (structure-conditioned), \textbf{Evo2} (DNA-level, causal) --- this is
+      where the models actually steer the search.
     \item Refold top candidates, self-consistency (TM-score) gate before
       trusting anything downstream.
   \end{enumerate}

@@ -23,6 +23,10 @@ data/*
 # Paperclip literature-annotation cache (regenerable per accession)
 epigen/pipeline/literature/cache/*
 !epigen/pipeline/literature/cache/.gitkeep
+
+# Edit-placement scan cache (regenerable per protein+edit, see edit_placement.py)
+epigen/pipeline/edit_placement_cache/*
+!epigen/pipeline/edit_placement_cache/.gitkeep
 *.pdb
 *.cif
 *.pt

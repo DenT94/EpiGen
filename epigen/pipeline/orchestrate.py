@@ -29,23 +29,14 @@ from epigen.pipeline.fold_invert_refold.run import (
 )
 from epigen.pipeline.fold_invert_refold.structure_source import get_structure
 from epigen.pipeline.literature import AnnotationRange, flag_positions, get_annotations
-from epigen.pipeline.oracle.codon import apply_aa_substitution_to_nt, apply_aa_substitutions_to_nt
+from epigen.pipeline.oracle.codon import apply_aa_substitutions_to_nt
 from epigen.pipeline.oracle.correlation import expert_agreement, fraction_below_wt
 from epigen.pipeline.oracle.evo2_scoring import window_log_prob_batch
 from epigen.pipeline.oracle.mcmc import MCMCCandidate, run_mcmc_search, window_score
 from epigen.pipeline.oracle.modal_app import run_mcmc_search_on_modal
 from epigen.pipeline.oracle.nt_resolution import resolve_wt_nt_sequence
-from epigen.pipeline.oracle.scoring import CANONICAL_AA, position_scores_esm2, position_scores_proteinmpnn
+from epigen.pipeline.oracle.scoring import position_scores_esm2, position_scores_proteinmpnn
 from epigen.pipeline.sae_diff.run import ThreeStateSAEDiff, diff_many_candidates
-
-# mypipelinethoughts.md step 4: "Sequences that are above WT are sent to a candidates
-# list right away [i.e. before/alongside MCMC]." A single-substitution scan over every
-# window position can shortlist far more than `candidate_num` above-WT hits on a large
-# window; caps how many of those (by the free ESM2+ProteinMPNN-only score, before the one
-# batched Evo2 call that would put them on the same scale as MCMC's own candidates) get
-# that Evo2 call spent on them, so a big window can't blow up into an oversized single
-# Evo2 batch call. Comfortably above any realistic `candidate_num`.
-INSTANT_CANDIDATE_SHORTLIST_CAP = 50
 
 
 @dataclass
@@ -291,59 +282,6 @@ def run_end_to_end(
 
     chain_starting_scores = _window_scores_with_evo2(chain_starting_sequences, chain_starting_nt_sequences)
     chain_ending_scores = _window_scores_with_evo2(chain_ending_sequences, chain_ending_nt_sequences)
-
-    # mypipelinethoughts.md step 4: "Sequences that are above WT are sent to a candidates
-    # list right away." Stage 1: every single-position window substitution's ESM2+ProteinMPNN
-    # -only score (free -- reuses the tables from the oracle sanity checks above, no Modal
-    # call), vs. the same Evo2-free baseline `fraction_below_wt`/`expert_agreement` already
-    # use. Most single substitutions score below WT (that's the whole point of the
-    # `fraction_below_wt` sanity check), so this shortlist is typically small or empty --
-    # `INSTANT_CANDIDATE_SHORTLIST_CAP` only bounds the rare large-window case where it isn't.
-    esm2_pmpnn_wt_baseline = window_score(edit_only.sequence, window_positions, esm2_scores, pmpnn_scores, 0.5, 0.5)
-    shortlist: list[tuple[int, str, str, float]] = []  # (mutated position, new AA, sequence, esm2+pmpnn-only score)
-    for pos in window_positions:
-        wt_aa = edit_only.sequence[pos - 1]
-        for aa in CANONICAL_AA:
-            if aa == wt_aa:
-                continue
-            candidate_seq = edit_only.sequence[: pos - 1] + aa + edit_only.sequence[pos:]
-            candidate_score = window_score(candidate_seq, window_positions, esm2_scores, pmpnn_scores, 0.5, 0.5)
-            if candidate_score > esm2_pmpnn_wt_baseline:
-                shortlist.append((pos, aa, candidate_seq, candidate_score))
-    shortlist.sort(key=lambda item: item[3], reverse=True)
-    shortlist = shortlist[:INSTANT_CANDIDATE_SHORTLIST_CAP]
-
-    # Stage 2: only for that (typically small) shortlist, put them on `wt_score`'s own scale
-    # (the search's actual freeze baseline, Evo2 included when `use_evo2` -- see the
-    # `wt_score`/`search_wt_score` comment above) via the same one-batched-call helper
-    # `chain_starting_scores`/`chain_ending_scores` already use, so an instant candidate is
-    # directly comparable/mergeable with MCMC's own -- one Evo2 call total, not one per
-    # shortlisted sequence, and zero Evo2 calls at all when the shortlist is empty.
-    instant_candidates: list[MCMCCandidate] = []
-    if shortlist:
-        shortlist_sequences = [seq for _, _, seq, _ in shortlist]
-        shortlist_nt_sequences = (
-            [apply_aa_substitution_to_nt(edit_only_nt_sequence, pos, aa) for pos, aa, _, _ in shortlist]
-            if edit_only_nt_sequence is not None
-            else [None] * len(shortlist)
-        )
-        shortlist_scores = _window_scores_with_evo2(shortlist_sequences, shortlist_nt_sequences)
-        instant_candidates = [
-            MCMCCandidate(sequence=seq, combined_score=score, passed_structural_check=None, nt_sequence=nt)
-            for seq, nt, score in zip(shortlist_sequences, shortlist_nt_sequences, shortlist_scores, strict=True)
-            if score > wt_score  # re-check against the authoritative baseline post-Evo2, not just the ESM2+PMPNN-only one
-        ]
-
-    if instant_candidates:
-        # Merge with MCMC's own candidates (same sequence keeps whichever scored higher --
-        # can only differ if MCMC also happened to land on this exact single-substitution
-        # sequence, in which case its own score, being on the identical scale, is a no-op
-        # tie), then re-rank and keep the top `candidate_num` overall, same as MCMC alone did.
-        merged_by_sequence: dict[str, MCMCCandidate] = {c.sequence: c for c in instant_candidates}
-        for c in mcmc_candidates:
-            if c.sequence not in merged_by_sequence or c.combined_score > merged_by_sequence[c.sequence].combined_score:
-                merged_by_sequence[c.sequence] = c
-        mcmc_candidates = sorted(merged_by_sequence.values(), key=lambda c: c.combined_score, reverse=True)[:candidate_num]
 
     top_candidate: RefoldedCandidate | None = None
     contact_deltas: list[NeighborDelta] = []
