@@ -75,9 +75,15 @@ def derive_inputs(kwargs: dict[str, Any]) -> dict[str, Any]:
 def format_label(entry: dict[str, Any]) -> str:
     kwargs = entry["kwargs"]
     summary = entry["summary"]
-    timestamp = entry["timestamp"].replace("T", " ")[:16]
+    # Stored in UTC (record_run uses datetime.now(timezone.utc)) but displayed in the
+    # machine's local zone -- .astimezone() with no argument converts an aware datetime to
+    # the system's local tz, and %Z picks up whatever abbreviation applies for that instant
+    # (PDT in summer / PST in winter for a Pacific-zoned machine), so this doesn't need to
+    # hardcode -- or get out of sync with -- a specific offset.
+    local_dt = datetime.fromisoformat(entry["timestamp"]).astimezone()
+    timestamp = local_dt.strftime("%Y-%m-%d %H:%M %Z")
     seq_preview = kwargs["wt_sequence"][:10]
     edit = f"{kwargs['edit_start']}:{kwargs['edit_sequence']}"
     n_candidates = summary.get("n_candidates", "?")
     wt_len = summary.get("wt_len", "?")
-    return f"{timestamp} UTC · {seq_preview}… ({wt_len}aa) · edit {edit} · {n_candidates} candidates"
+    return f"{timestamp} · {seq_preview}… ({wt_len}aa) · edit {edit} · {n_candidates} candidates"

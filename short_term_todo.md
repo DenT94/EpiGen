@@ -4,7 +4,7 @@
 4. [x] We don't need the ! warning for everything inside the edit window. Did we make sure that our original edit is preserved by the sampling?
 5. [x] Now in the structural viewer page we have two conflicting Color by labeled delta delta sae in conflict, doesn't make much sense.
 6. [x] Other MCMC candidate does not show WT by default nor the top candidate, and sees which of the elements dropdown have a structure in cache and shows the top scoring of those
-7. something broke in the structure viewer. All tabs inside structure viewer should have the same view. Also please color the edited region eg WHSPRAL red, and SAE activations in a different color, e.g. orange
-8. also past runs should be labeled with PST? 
+7. [x] something broke in the structure viewer. All tabs inside structure viewer should have the same view. Also please color the edited region eg WHSPRAL red, and SAE activations in a different color, e.g. orange
+8. [x] also past runs should be labeled with PST? 
 
  

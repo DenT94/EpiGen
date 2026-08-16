@@ -18,10 +18,10 @@ from __future__ import annotations
 
 import logging
 import re
-import subprocess
 from dataclasses import replace
 
 from epigen.pipeline.literature.annotations import AccessionMetadata, AnnotationRange, PaperReference
+from epigen.pipeline.literature.paperclip_client import PaperclipError, run_paperclip
 
 logger = logging.getLogger(__name__)
 
@@ -83,19 +83,11 @@ def _parse_search_results(stdout: str) -> list[PaperReference]:
 
 def _search(query: str, *, n: int) -> list[PaperReference]:
     try:
-        result = subprocess.run(
-            ["paperclip", "search", "-s", "pmc", "-n", str(n), query],
-            capture_output=True,
-            text=True,
-            timeout=PAPERCLIP_SEARCH_TIMEOUT_S,
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-        logger.warning(f"Paperclip search failed for {query!r}: {exc}")
+        stdout = run_paperclip(["search", "-s", "pmc", "-n", str(n), query], timeout=PAPERCLIP_SEARCH_TIMEOUT_S)
+    except PaperclipError as exc:
+        logger.warning(f"Paperclip search failed for {query!r} (after retries): {exc}")
         return []
-    if result.returncode != 0:
-        logger.warning(f"Paperclip search exited {result.returncode} for {query!r}: {result.stderr.strip()}")
-        return []
-    return _parse_search_results(result.stdout)
+    return _parse_search_results(stdout)
 
 
 def _query_for(metadata: AccessionMetadata, annotation: AnnotationRange) -> str:

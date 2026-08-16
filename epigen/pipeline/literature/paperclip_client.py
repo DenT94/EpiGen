@@ -11,14 +11,53 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import time
 
 logger = logging.getLogger(__name__)
 
 PAPERCLIP_TIMEOUT_S = 30
+PAPERCLIP_MAX_ATTEMPTS = 3
+PAPERCLIP_RETRY_DELAY_S = 2.0
 
 
 class PaperclipError(RuntimeError):
     """The `paperclip` CLI failed or returned something this module can't parse."""
+
+
+def run_paperclip(args: list[str], *, timeout: float = PAPERCLIP_TIMEOUT_S) -> str:
+    """Run a `paperclip` CLI subcommand (e.g. `["sql", "-s", "proteins", "SELECT ..."]`,
+    `["search", "-s", "pmc", ..., query]`) and return its stdout, retrying transient
+    failures up to `PAPERCLIP_MAX_ATTEMPTS` times.
+
+    Observed live: the *exact same* query sometimes returns in ~200ms and sometimes
+    hangs to `timeout` or comes back with the CLI's own "[error] Request timed out",
+    back to back, with no change on our end -- a flaky backend, not a bad query. A
+    couple of short-delay retries papers over that instead of every caller
+    (`run_protein_sql`, `literature.papers._search`) silently degrading a transient
+    blip into "no annotations"/"no papers found". `FileNotFoundError` (the `paperclip`
+    binary itself missing) is not retried -- that's not transient.
+    """
+    last_error: str = ""
+    for attempt in range(1, PAPERCLIP_MAX_ATTEMPTS + 1):
+        try:
+            result = subprocess.run(["paperclip", *args], capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            last_error = f"timed out after {timeout}s: {exc}"
+        except FileNotFoundError as exc:
+            raise PaperclipError(f"could not run `paperclip {' '.join(args)}`: {exc}") from exc
+        else:
+            if result.returncode == 0:
+                return result.stdout
+            last_error = f"exited {result.returncode}: {result.stderr.strip()}"
+
+        if attempt < PAPERCLIP_MAX_ATTEMPTS:
+            logger.warning(
+                f"`paperclip {' '.join(args)}` failed (attempt {attempt}/{PAPERCLIP_MAX_ATTEMPTS}): "
+                f"{last_error} -- retrying in {PAPERCLIP_RETRY_DELAY_S}s"
+            )
+            time.sleep(PAPERCLIP_RETRY_DELAY_S)
+
+    raise PaperclipError(f"`paperclip {' '.join(args)}` failed after {PAPERCLIP_MAX_ATTEMPTS} attempts: {last_error}")
 
 
 def _parse_pipe_table(stdout: str) -> list[dict[str, str]]:
@@ -46,17 +85,8 @@ def run_protein_sql(query: str) -> list[dict[str, str]]:
 
     Returns one dict per row, string-valued (the CLI's table output has no
     type info -- callers cast as needed). Raises `PaperclipError` on CLI
-    failure; a query that legitimately matches nothing returns `[]`.
+    failure (after retries -- see `run_paperclip`); a query that
+    legitimately matches nothing returns `[]`.
     """
-    try:
-        result = subprocess.run(
-            ["paperclip", "sql", "-s", "proteins", query],
-            capture_output=True,
-            text=True,
-            timeout=PAPERCLIP_TIMEOUT_S,
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-        raise PaperclipError(f"could not run `paperclip sql`: {exc}") from exc
-    if result.returncode != 0:
-        raise PaperclipError(f"`paperclip sql` exited {result.returncode}: {result.stderr.strip()}")
-    return _parse_pipe_table(result.stdout)
+    stdout = run_paperclip(["sql", "-s", "proteins", query], timeout=PAPERCLIP_TIMEOUT_S)
+    return _parse_pipe_table(stdout)
