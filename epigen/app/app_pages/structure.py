@@ -2,10 +2,10 @@
 compensatory positions highlighted.
 
 Reads the last completed run from `st.session_state.epigen_result` (set by
-`app_pages/design.py` -- run a design first). WT, edit-only, and the top
+`app_pages/landing.py` -- run a design first). WT, edit-only, and the top
 MCMC candidate already have real folded structures from that run; every
 other MCMC candidate is sequence-only until folded here on demand (an extra
-Modal call), same on-demand pattern as Design's "Describe" SAE step.
+Modal call), same on-demand pattern as Results' "Describe" SAE step.
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ def _top_ddsae_deltas(sae_diff, k: int = 3):
     """Top-k ΔΔSAE deltas for `sae_diff` -- `compensated_vs_original`, the literal WT-vs-MU_STAR
     double diff mypipelinethoughts.md calls ΔΔSAE (see `sae_diff.pca`'s module docstring).
     Already computed for every candidate by the cheap esmc_300m pass in orchestrate.py -- no
-    extra Modal call to pick from these, unlike design.py's heavier "Describe" (esmc_6b/layer60)."""
+    extra Modal call to pick from these, unlike results.py's heavier "Describe" (esmc_6b/layer60)."""
     return top_k_deltas(sae_diff.compensated_vs_original, k=k)
 
 
@@ -104,10 +104,10 @@ st.subheader(":material/view_in_ar: Structure viewer", divider="gray")
 
 if result is None or inputs is None:
     st.info(
-        "Run a design on the Design page first -- the structure viewer needs a completed run.",
+        "Run a design on the Landing page first -- the structure viewer needs a completed run.",
         icon=":material/info:",
     )
-    st.page_link("app_pages/design.py", label="Go to Design", icon=":material/edit_note:")
+    st.page_link("app_pages/landing.py", label="Go to Landing", icon=":material/edit_note:")
     st.stop()
 
 edit_positions = inputs["edit_positions"]

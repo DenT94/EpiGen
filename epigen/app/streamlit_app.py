@@ -1,10 +1,11 @@
 """EpiGen Streamlit UI entry point.
 
 Sets up shared page config/header/session state, then delegates to
-`app_pages/*.py` via `st.navigation`. See `app_pages/design.py` for the
-input form + pipeline run, and `app_pages/structure.py` for the structural
-viewer (WT/edit/candidate structures with the edit and compensatory
-positions highlighted).
+`app_pages/*.py` via `st.navigation`. See `app_pages/landing.py` for the
+input form, `app_pages/results.py` for the detailed tables/plots on a
+completed run, and `app_pages/structure.py` for the structural viewer
+(WT/edit/candidate structures with the edit and compensatory positions
+highlighted).
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from epigen.app.pipeline_cache import cached_run_end_to_end
 
 st.set_page_config(page_title="EpiGen", page_icon=":material/biotech:", layout="wide")
 
-# Shared across pages: the last completed pipeline run (None until Design's
+# Shared across pages: the last completed pipeline run (None until Landing's
 # form is submitted successfully, or a past run is loaded from the sidebar
 # below). `epigen_inputs` mirrors the run's actual arguments (not raw widget
 # state) via `run_history.derive_inputs`, the single source of truth for
@@ -45,7 +46,7 @@ with st.sidebar:
     st.subheader(":material/history: Past experiments", divider="gray")
     history = run_history.load_history()
     if not history:
-        st.caption("No past runs yet -- completed Design runs will show up here.")
+        st.caption("No past runs yet -- completed Landing runs will show up here.")
     else:
         past_run = st.selectbox(
             "Load a past run",
@@ -62,12 +63,13 @@ with st.sidebar:
                 else:
                     st.session_state.epigen_result = result
                     st.session_state.epigen_inputs = run_history.derive_inputs(past_run["kwargs"])
-                    st.toast("Loaded -- see the Design or Structure viewer page.", icon=":material/check:")
+                    st.switch_page("app_pages/results.py")
 
 page = st.navigation(
     [
-        st.Page("app_pages/design.py", title="Design", icon=":material/edit_note:", default=True),
+        st.Page("app_pages/landing.py", title="Landing", icon=":material/edit_note:", default=True),
         st.Page("app_pages/structure.py", title="Structure viewer", icon=":material/view_in_ar:"),
+        st.Page("app_pages/results.py", title="Results", icon=":material/table_chart:"),
     ]
 )
 page.run()

@@ -31,7 +31,7 @@ from epigen.pipeline.fold_invert_refold.structure_source import get_structure
 from epigen.pipeline.literature import AnnotationRange, flag_positions, get_annotations
 from epigen.pipeline.oracle.codon import apply_aa_substitutions_to_nt, reverse_translate
 from epigen.pipeline.oracle.correlation import expert_agreement, fraction_below_wt
-from epigen.pipeline.oracle.mcmc import MCMCCandidate, run_mcmc_search
+from epigen.pipeline.oracle.mcmc import MCMCCandidate, run_mcmc_search, window_score
 from epigen.pipeline.oracle.modal_app import run_mcmc_search_on_modal
 from epigen.pipeline.oracle.scoring import position_scores_esm2, position_scores_proteinmpnn
 from epigen.pipeline.sae_diff.run import ThreeStateSAEDiff, diff_many_candidates
@@ -50,8 +50,11 @@ class EndToEndResult:
     contact_deltas: list[NeighborDelta]  # edit_only vs top_candidate, every changed position
     sae_diffs: dict[str, ThreeStateSAEDiff]  # keyed by candidate sequence, one entry per mcmc_candidates
     annotation_ranges: list[AnnotationRange]  # all known functional/structural ranges (literature.get_annotations)
-    annotation_conflicts: list[AnnotationRange]  # subset overlapping edit_positions or window_positions
+    annotation_conflicts: list[AnnotationRange]  # subset overlapping window_positions (not the fixed edit itself)
     top_candidate_evidence: CandidateEvidence | None  # stage-4 input bundle for top_candidate; None if no candidates
+    wt_score: float  # edit_only's own window_score -- the baseline every chain score below is measured against
+    chain_starting_scores: list[float]  # one per MCMC chain, window_score at its starting sequence
+    chain_ending_scores: list[float]  # one per MCMC chain, same order, window_score at its final sequence
 
 
 def run_end_to_end(
@@ -130,7 +133,11 @@ def run_end_to_end(
 
     if annotation_ranges is None:
         annotation_ranges = get_annotations(wt_sequence, pdb_id=pdb_id)
-    annotation_conflicts = flag_positions(annotation_ranges, [*edit_positions, *window_positions])
+    # window_positions only, not edit_positions -- the edit is already a fixed, done decision
+    # (not something being chosen among), so it overlapping an annotation isn't an actionable
+    # warning the way the compensatory window (residues MCMC is actually free to mutate)
+    # overlapping one is.
+    annotation_conflicts = flag_positions(annotation_ranges, window_positions)
 
     original = get_structure(wt_sequence, pdb_id=pdb_id, chain_id=chain_id, seed=seed)
 
@@ -149,7 +156,7 @@ def run_end_to_end(
         edit_only_nt_sequence = apply_aa_substitutions_to_nt(wt_nt, edit_start, edit_sequence)
 
     if use_modal_mcmc:
-        raw_candidates = run_mcmc_search_on_modal(
+        raw_result = run_mcmc_search_on_modal(
             edit_only,
             window_positions,
             chain_id=chain_id,
@@ -169,10 +176,12 @@ def run_end_to_end(
                 passed_structural_check=c["passed_structural_check"],
                 nt_sequence=c["nt_sequence"],
             )
-            for c in raw_candidates
+            for c in raw_result["candidates"]
         ]
+        chain_starting_sequences = raw_result["starting_sequences"]
+        chain_ending_sequences = raw_result["ending_sequences"]
     else:
-        mcmc_candidates = run_mcmc_search(
+        mcmc_result = run_mcmc_search(
             edit_only,
             window_positions,
             chain_id=chain_id,
@@ -185,6 +194,43 @@ def run_end_to_end(
             nt_sequence=edit_only_nt_sequence,
             weight_evo2=weight_evo2,
         )
+        mcmc_candidates = mcmc_result.candidates
+        chain_starting_sequences = mcmc_result.starting_sequences
+        chain_ending_sequences = mcmc_result.ending_sequences
+
+    # The fixed edit must survive every candidate and every chain's start/end untouched --
+    # `run_mcmc_search`'s round loop only ever proposes substitutions at `window_positions`,
+    # and `propose_compensatory_mutations`'s warm starts fix everything outside
+    # `window_positions` (which includes edit_positions, since orchestrate.py already
+    # rejects the two ranges overlapping above). Both guarantee this by construction; this
+    # is a cheap, local (no Modal call) assertion that it actually held, not just an assumed
+    # invariant -- fail loudly rather than silently ship a candidate that lost the edit.
+    for label, sequences in (
+        ("candidate", (c.sequence for c in mcmc_candidates)),
+        ("chain start", chain_starting_sequences),
+        ("chain end", chain_ending_sequences),
+    ):
+        for seq in sequences:
+            if any(seq[p - 1] != edit_only.sequence[p - 1] for p in edit_positions):
+                raise RuntimeError(
+                    f"Fixed edit was not preserved in a {label} sequence -- expected "
+                    f"{edit_sequence!r} at positions {edit_positions}, got {seq!r}. This "
+                    "should be structurally impossible; see orchestrate.py's comment here."
+                )
+
+    # Free (no extra Modal call): score WT/chain starts/chain ends with the same
+    # ESM2+ProteinMPNN per-position tables already spent above on the oracle sanity
+    # checks. 0.5/0.5 matches run_mcmc_search's own (unexposed-here) default weights,
+    # so this is directly comparable to what the search itself optimized -- Evo2's
+    # whole-sequence term isn't included, since it isn't a per-position table (see
+    # oracle.mcmc.window_score's docstring).
+    wt_score = window_score(edit_only.sequence, window_positions, esm2_scores, pmpnn_scores, 0.5, 0.5)
+    chain_starting_scores = [
+        window_score(seq, window_positions, esm2_scores, pmpnn_scores, 0.5, 0.5) for seq in chain_starting_sequences
+    ]
+    chain_ending_scores = [
+        window_score(seq, window_positions, esm2_scores, pmpnn_scores, 0.5, 0.5) for seq in chain_ending_sequences
+    ]
 
     top_candidate: RefoldedCandidate | None = None
     contact_deltas: list[NeighborDelta] = []
@@ -233,4 +279,7 @@ def run_end_to_end(
         annotation_ranges=annotation_ranges,
         annotation_conflicts=annotation_conflicts,
         top_candidate_evidence=top_candidate_evidence,
+        wt_score=wt_score,
+        chain_starting_scores=chain_starting_scores,
+        chain_ending_scores=chain_ending_scores,
     )

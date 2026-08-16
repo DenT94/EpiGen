@@ -44,7 +44,14 @@ app = modal.App("epigen-mcmc")
 CREDENTIALS_SECRET = modal.Secret.from_name("epigen-nested-modal-auth", environment_name="proto-env")
 
 
-@app.function(image=image, timeout=1800, secrets=[CREDENTIALS_SECRET])
+MCMC_SEARCH_TIMEOUT_S = 6 * 3600  # 6h -- was 1800s (30min), which silently killed a real ~2500-chain
+# job mid-search with *no* partial results: run_mcmc_search holds all chain state in memory
+# and only returns once, at the very end, so any timeout/crash loses the entire run's compute,
+# not just the tail. There's still no checkpointing -- this only buys more runway before that
+# same all-or-nothing failure mode recurs, not resilience to it. Modal's own hard cap is 24h.
+
+
+@app.function(image=image, timeout=MCMC_SEARCH_TIMEOUT_S, secrets=[CREDENTIALS_SECRET])
 def run_mcmc_search_remote(
     sequence: str,
     structure_pdb: str,
@@ -62,10 +69,15 @@ def run_mcmc_search_remote(
     refold_every: int | None = None,
     candidate_num: int = 5,
     seed: int | None = None,
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     """Runs the whole MCMC search server-side. JSON-safe args only (Modal
     functions need serializable arguments) -- `structure_pdb` is raw PDB
     text, reconstructed into a real `Structure` inside the container.
+
+    Returns a dict (not a bare candidate list) so the chain-level
+    `starting_sequences`/`ending_sequences` from `MCMCSearchResult` survive
+    the round trip too -- `orchestrate.py` uses those for a free (no extra
+    Modal call) WT-vs-chain score comparison; see `oracle.mcmc.window_score`.
     """
     from proto_tools.entities.structures import Structure
 
@@ -80,7 +92,7 @@ def run_mcmc_search_remote(
         avg_pae=0.0,
         passed_confidence_gate=True,
     )
-    candidates = run_mcmc_search(
+    result = run_mcmc_search(
         folded,
         window_positions,
         chain_id=chain_id,
@@ -96,23 +108,29 @@ def run_mcmc_search_remote(
         candidate_num=candidate_num,
         seed=seed,
     )
-    return [
-        {
-            "sequence": c.sequence,
-            "combined_score": c.combined_score,
-            "passed_structural_check": c.passed_structural_check,
-            "nt_sequence": c.nt_sequence,
-        }
-        for c in candidates
-    ]
+    return {
+        "candidates": [
+            {
+                "sequence": c.sequence,
+                "combined_score": c.combined_score,
+                "passed_structural_check": c.passed_structural_check,
+                "nt_sequence": c.nt_sequence,
+            }
+            for c in result.candidates
+        ],
+        "starting_sequences": result.starting_sequences,
+        "ending_sequences": result.ending_sequences,
+    }
 
 
-def run_mcmc_search_on_modal(folded, window_positions: list[int], **kwargs) -> list[dict[str, Any]]:
+def run_mcmc_search_on_modal(folded, window_positions: list[int], **kwargs) -> dict[str, Any]:
     """Local-side convenience wrapper: call the deployed `run_mcmc_search_remote`
     function from ordinary (non-Modal) Python, e.g. from `orchestrate.py`.
 
     Requires `modal deploy -e proto-env epigen/pipeline/oracle/modal_app.py`
-    to have been run first.
+    to have been run (again, after this function's return shape changed from
+    a bare candidate list to a dict with "candidates"/"starting_sequences"/
+    "ending_sequences") before this actually returns the new shape.
     """
     remote_fn = modal.Function.from_name("epigen-mcmc", "run_mcmc_search_remote", environment_name="proto-env")
     return remote_fn.remote(

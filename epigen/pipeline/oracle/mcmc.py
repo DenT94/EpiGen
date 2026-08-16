@@ -9,7 +9,7 @@ each expert's score fresh every round (no stale precomputed table, unlike a
 position-independent design).
 
 ESM2/ProteinMPNN score per-position AA log-probs, summed over the window
-(see `_window_score`). Evo2 is different in kind -- a single whole-nt-sequence
+(see `window_score`). Evo2 is different in kind -- a single whole-nt-sequence
 causal log-likelihood, not a per-position AA table -- so it enters as a third
 additive term rather than another per-position sum; see oracle/evo2_scoring.py
 and oracle/codon.py for why and how the nt sequence is carried alongside the
@@ -41,7 +41,7 @@ from epigen.pipeline.oracle.scoring import (
 )
 
 
-def _window_score(
+def window_score(
     sequence: str,
     window_positions: list[int],
     esm2_scores: PositionScores,
@@ -50,7 +50,16 @@ def _window_score(
     weight_pmpnn: float,
 ) -> float:
     """Sum of the weighted per-position AA score over `window_positions`, for the AA
-    actually present at each position in `sequence`."""
+    actually present at each position in `sequence`.
+
+    Public (not `_window_score`) so a caller with its own `esm2_scores`/`pmpnn_scores`
+    tables -- e.g. the ones `orchestrate.py` already computes once for the oracle
+    sanity checks -- can score an arbitrary sequence (WT, an MCMC chain's starting or
+    ending point, ...) at zero extra Modal cost, using the same ESM2+ProteinMPNN
+    formula the search itself optimizes (Evo2's whole-sequence term isn't included --
+    it isn't a per-position table, so it can't be reused this way without its own
+    fresh Modal call per sequence).
+    """
     total = 0.0
     for pos in window_positions:
         aa = sequence[pos - 1]
@@ -77,6 +86,18 @@ class MCMCCandidate:
     nt_sequence: str | None = None  # only populated when Evo2 scoring was enabled
 
 
+@dataclass(frozen=True)
+class MCMCSearchResult:
+    """Everything `run_mcmc_search` produces: the ranked candidates, plus each individual
+    chain's starting and ending sequence -- for comparing the *distribution* of where chains
+    started vs. where they ended up (e.g. against a WT/edit-only baseline), not just the
+    handful of best-scoring sequences `candidates` keeps."""
+
+    candidates: list[MCMCCandidate]  # top candidate_num unique sequences, existing behavior
+    starting_sequences: list[str]  # one per chain (num_starting_points * chains_per_start), pre-round-loop
+    ending_sequences: list[str]  # one per chain, same order, after all `steps` rounds
+
+
 def run_mcmc_search(
     folded: FoldedStructure,
     window_positions: list[int],
@@ -93,9 +114,11 @@ def run_mcmc_search(
     refold_every: int | None = None,
     candidate_num: int = 10,
     seed: int | None = None,
-) -> list[MCMCCandidate]:
+) -> MCMCSearchResult:
     """Run `num_starting_points * chains_per_start` round-synchronized MCMC chains and
-    return the top `candidate_num` unique sequences by combined score.
+    return the top `candidate_num` unique sequences by combined score, plus every chain's
+    individual starting/ending sequence (`MCMCSearchResult.starting_sequences`/
+    `.ending_sequences`) for comparing score distributions, not just the best few.
 
     Starting points: `folded`'s own sequence plus `num_starting_points - 1`
     diverse warm starts sampled via stage 1's `propose_compensatory_mutations`
@@ -142,6 +165,11 @@ def run_mcmc_search(
         for start_seq in starting_sequences
         for _ in range(chains_per_start)
     ]
+    # One entry per chain (not deduped -- `chains_per_start` copies of the same warm start
+    # each count separately), captured before the round loop mutates `chain.sequence`. Lets a
+    # caller compare the *distribution* of where chains started vs. ended without any extra
+    # Modal calls (see `run_mcmc_search`'s docstring / `MCMCSearchResult`).
+    starting_sequences_per_chain = [c.sequence for c in chains]
 
     # Round 0: score every chain's starting sequence once, to seed `score`.
     esm2_batch = position_scores_esm2_batch([c.sequence for c in chains])
@@ -149,7 +177,7 @@ def run_mcmc_search(
     evo2_batch = nt_sequence_score_batch([c.nt_sequence for c in chains]) if use_evo2 else [0.0] * len(chains)
     for chain, esm2_scores, pmpnn_scores, evo2_score in zip(chains, esm2_batch, pmpnn_batch, evo2_batch, strict=True):
         chain.score = (
-            _window_score(chain.sequence, window_positions, esm2_scores, pmpnn_scores, weight_esm2, weight_pmpnn)
+            window_score(chain.sequence, window_positions, esm2_scores, pmpnn_scores, weight_esm2, weight_pmpnn)
             + weight_evo2 * evo2_score
         )
 
@@ -174,7 +202,7 @@ def run_mcmc_search(
             chains, proposals, esm2_batch, pmpnn_batch, evo2_batch, nt_proposals or [None] * len(chains), strict=True
         ):
             proposed_score = (
-                _window_score(proposed_seq, window_positions, esm2_scores, pmpnn_scores, weight_esm2, weight_pmpnn)
+                window_score(proposed_seq, window_positions, esm2_scores, pmpnn_scores, weight_esm2, weight_pmpnn)
                 + weight_evo2 * evo2_score
             )
             delta = proposed_score - chain.score
@@ -187,29 +215,38 @@ def run_mcmc_search(
                 best_score_by_sequence[chain.sequence] = chain.score
                 best_nt_by_sequence[chain.sequence] = chain.nt_sequence
 
+    ending_sequences_per_chain = [c.sequence for c in chains]
     ranked = sorted(best_score_by_sequence.items(), key=lambda kv: kv[1], reverse=True)
 
     if refold_every is None:
         top = ranked[:candidate_num]
-        return [
-            MCMCCandidate(sequence=seq, combined_score=score, passed_structural_check=None, nt_sequence=best_nt_by_sequence[seq])
-            for seq, score in top
-        ]
+        return MCMCSearchResult(
+            candidates=[
+                MCMCCandidate(sequence=seq, combined_score=score, passed_structural_check=None, nt_sequence=best_nt_by_sequence[seq])
+                for seq, score in top
+            ],
+            starting_sequences=starting_sequences_per_chain,
+            ending_sequences=ending_sequences_per_chain,
+        )
 
     pre_filter = ranked[: candidate_num * 3]
     pseudo_candidates = [CompensatoryCandidate(sequence=seq, perplexity=0.0, sequence_recovery=0.0) for seq, _ in pre_filter]
     refolded = refold_and_gate(pseudo_candidates, folded, seed=seed)
     validated = [r for r in refolded if r.passed_self_consistency_gate]
     validated.sort(key=lambda r: best_score_by_sequence[r.candidate.sequence], reverse=True)
-    return [
-        MCMCCandidate(
-            sequence=r.candidate.sequence,
-            combined_score=best_score_by_sequence[r.candidate.sequence],
-            passed_structural_check=True,
-            nt_sequence=best_nt_by_sequence[r.candidate.sequence],
-        )
-        for r in validated[:candidate_num]
-    ]
+    return MCMCSearchResult(
+        candidates=[
+            MCMCCandidate(
+                sequence=r.candidate.sequence,
+                combined_score=best_score_by_sequence[r.candidate.sequence],
+                passed_structural_check=True,
+                nt_sequence=best_nt_by_sequence[r.candidate.sequence],
+            )
+            for r in validated[:candidate_num]
+        ],
+        starting_sequences=starting_sequences_per_chain,
+        ending_sequences=ending_sequences_per_chain,
+    )
 
 
 def _reverse_translate_matching(aa_sequence: str) -> str:
