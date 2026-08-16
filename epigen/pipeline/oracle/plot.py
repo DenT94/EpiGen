@@ -46,7 +46,7 @@ def plot_score_comparison(wt_score: float, starting_scores: list[float], ending_
         wt_score, ax.get_ylim()[1] * 0.98, " WT", ha="left", va="top", fontsize=8, color=WT_COLOR, fontweight="bold"
     )
 
-    ax.set_xlabel("window score (ESM2+ProteinMPNN, weighted sum over compensatory window)")
+    ax.set_xlabel("MOE score (higher = better)")
     ax.set_ylabel("chains")
     ax.set_title(
         f"MCMC chain scores: starting vs. ending points ({len(starting_scores)} chains)",

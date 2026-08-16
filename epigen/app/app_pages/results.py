@@ -128,7 +128,7 @@ st.dataframe(
         # collapsing to a vacuous "identical".
         {
             "mutation": mutation_name(wt_sequence, c.sequence),
-            "sequence": c.sequence,
+            # "sequence": c.sequence,
             "combined_score": c.combined_score,
         }
         for c in result.mcmc_candidates
