@@ -26,7 +26,10 @@ with st.form("run_form"):
     with st.container(horizontal=True):
         pdb_id = st.text_input(
             "PDB ID (optional)",
-            help="Skip the RCSB search and use this entry directly. Leave blank to always search first.",
+            value="193L",
+            help="Skip the RCSB search and use this entry directly. Leave blank to always search first. "
+            "Defaults to 193L, chain A -- the entry the WT sequence above already auto-resolves to "
+            "(100% identity), just given directly so a run doesn't pay for the RCSB search every time.",
         )
         chain_id = st.text_input("Chain ID", value="A")
 
