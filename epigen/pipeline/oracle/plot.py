@@ -30,9 +30,27 @@ def plot_score_comparison(wt_score: float, starting_scores: list[float], ending_
     counts once per chain, matching how many independent trajectories that
     starting point actually seeded.
     """
-    mpl.rcParams.update({"font.size": 9, "axes.linewidth": 0.6, "figure.dpi": 150, "savefig.dpi": 200})
+    # Bumped from font.size=9 for readability (matching literature/plot.py's pass) --
+    # done via rcParams rather than doubling individual fontsize= calls, so axes.labelsize/
+    # xtick.labelsize/ytick.labelsize/legend.fontsize (which default to *relative* keywords
+    # like "medium"/"large" off font.size) scale along with everything else instead of
+    # silently staying tiny -- that mismatch is exactly what literature/plot.py's readability
+    # pass missed for its own xlabel/ylabel/tick labels.
+    mpl.rcParams.update(
+        {
+            "font.size": 18,
+            "axes.titlesize": 20,
+            "axes.labelsize": 18,
+            "xtick.labelsize": 16,
+            "ytick.labelsize": 16,
+            "legend.fontsize": 15,
+            "axes.linewidth": 0.6,
+            "figure.dpi": 150,
+            "savefig.dpi": 200,
+        }
+    )
 
-    fig, ax = plt.subplots(figsize=(8, 3.5))
+    fig, ax = plt.subplots(figsize=(11, 5))
 
     all_scores = [*starting_scores, *ending_scores, wt_score]
     lo, hi = min(all_scores), max(all_scores)
@@ -43,7 +61,7 @@ def plot_score_comparison(wt_score: float, starting_scores: list[float], ending_
     ax.hist(ending_scores, bins=bins, range=(lo - pad, hi + pad), color=ENDING_COLOR, alpha=0.55, zorder=3)
     ax.axvline(wt_score, color=WT_COLOR, lw=1.8, ls="--", zorder=4)
     ax.text(
-        wt_score, ax.get_ylim()[1] * 0.98, " WT", ha="left", va="top", fontsize=8, color=WT_COLOR, fontweight="bold"
+        wt_score, ax.get_ylim()[1] * 0.98, " WT", ha="left", va="top", fontsize=16, color=WT_COLOR, fontweight="bold"
     )
 
     ax.set_xlabel("MOE score (higher = better)")
@@ -63,7 +81,6 @@ def plot_score_comparison(wt_score: float, starting_scores: list[float], ending_
         ],
         loc="upper left",
         frameon=False,
-        fontsize=7.5,
     )
     fig.tight_layout()
     return fig

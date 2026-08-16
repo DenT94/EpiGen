@@ -47,9 +47,20 @@ def plot_annotation_map(
     `window_positions` shades the compensatory search window; `conflicts` (a subset of
     `ranges`, e.g. `orchestrate.EndToEndResult.annotation_conflicts`) get a bold outline.
     """
+    # Bumped for readability. Done via rcParams (not just doubling individual fontsize=
+    # calls below, which is how this got left inconsistent the first pass) so
+    # axes.labelsize/xtick.labelsize/ytick.labelsize -- which the xlabel and tick labels
+    # actually use, and which default to *relative* keywords like "medium" off font.size --
+    # scale along with everything else instead of silently staying at the old small size.
+    # See oracle/plot.py's plot_score_comparison for the same fix, same rationale.
     mpl.rcParams.update(
         {
-            "font.size": 9,
+            "font.size": 18,
+            "axes.titlesize": 20,
+            "axes.labelsize": 18,
+            "xtick.labelsize": 16,
+            "ytick.labelsize": 16,
+            "legend.fontsize": 15,
             "axes.linewidth": 0.6,
             "figure.dpi": 150,
             "savefig.dpi": 200,
@@ -59,7 +70,11 @@ def plot_annotation_map(
     ordered = sorted(ranges, key=lambda r: (r.start, r.end))
 
     n_rows = len(ordered)
-    fig_height = 1.4 + 0.32 * max(n_rows, 1)
+    # + 1.2in fixed: room for the legend now living below the axes (bbox_to_anchor,
+    # see the fig.legend call below) plus the xlabel -- fig.tight_layout() doesn't
+    # reliably account for a legend anchored outside the axes bbox, so that space is
+    # reserved explicitly via fig.subplots_adjust(bottom=...) below instead.
+    fig_height = 1.4 + 0.32 * max(n_rows, 1) + 1.2
     fig, ax = plt.subplots(figsize=(11, fig_height))
 
     backbone_y = n_rows + 0.9
@@ -72,7 +87,7 @@ def plot_annotation_map(
         construct_label,
         ha="right",
         va="center",
-        fontsize=9,
+        fontsize=18,
         fontweight="bold",
     )
 
@@ -80,8 +95,8 @@ def plot_annotation_map(
         w_lo, w_hi = min(window_positions), max(window_positions)
         ax.axvspan(w_lo - 0.5, w_hi + 0.5, color=WINDOW_COLOR, alpha=0.12, zorder=1, lw=0)
         ax.text(
-            (w_lo + w_hi) / 2, backbone_y + 0.85, "compensatory window",
-            ha="center", va="bottom", fontsize=7.5, color=WINDOW_COLOR, style="italic",
+            (w_lo + w_hi) / 2, backbone_y + 1.45, "compensatory window",
+            ha="center", va="bottom", fontsize=15, color=WINDOW_COLOR, style="italic",
         )
     if isinstance(edit_position, tuple):
         e_lo, e_hi = edit_position
@@ -90,11 +105,11 @@ def plot_annotation_map(
         else:
             ax.axvspan(e_lo - 0.5, e_hi + 0.5, color=EDIT_COLOR, alpha=0.22, zorder=2, lw=0)
         ax.text((e_lo + e_hi) / 2, backbone_y + 0.5, "edit", ha="center", va="bottom",
-                fontsize=7.5, color=EDIT_COLOR, fontweight="bold")
+                fontsize=15, color=EDIT_COLOR, fontweight="bold")
     elif edit_position is not None:
         ax.axvline(edit_position, color=EDIT_COLOR, lw=1.4, ls="--", zorder=4)
         ax.text(edit_position, backbone_y + 0.5, "edit", ha="center", va="bottom",
-                fontsize=7.5, color=EDIT_COLOR, fontweight="bold")
+                fontsize=15, color=EDIT_COLOR, fontweight="bold")
 
     for i, r in enumerate(ordered):
         y = n_rows - i - 1
@@ -107,7 +122,7 @@ def plot_annotation_map(
             # between r.start and r.end is part of the bond (see BOND_FEATURE_TYPES).
             line_color = CONFLICT_EDGE_COLOR if is_conflict else color
             lw = 2.0 if is_conflict else 1.6
-            ax.plot([r.start, r.end], [y + 0.3, y + 0.3], color=line_color, lw=lw, zorder=3)
+            ax.plot([r.start, r.end], [y + 0.4, y + 0.4], color=line_color, lw=lw, zorder=3)
             for x in (r.start, r.end):
                 ax.plot([x, x], [y, y + 0.6], color=line_color, lw=lw, zorder=3)
         else:
@@ -120,20 +135,25 @@ def plot_annotation_map(
             )
         ax.plot([r.start, r.start], [0.0, backbone_y - 0.3], color="#e6e6e6", lw=0.6, ls=(0, (2, 2)), zorder=1)
         prefix = "⚠ " if is_conflict else ""
-        ax.text(r.start - sequence_length * 0.008, y + 0.3, f"{prefix}{r.label}", ha="right", va="center", fontsize=7.6)
+        ax.text(r.start - sequence_length * 0.008, y + 0.4, f"{prefix}{r.label}", ha="right", va="center", fontsize=15)
         pos_label = f"{r.start}" if r.start == r.end else f"{r.start}–{r.end}"
-        ax.text(r.start + width + sequence_length * 0.008, y + 0.3, pos_label, ha="left", va="center",
-                fontsize=6.8, color="#666666")
+        ax.text(r.start + width + sequence_length * 0.008, y + 0.4, pos_label, ha="left", va="center",
+                fontsize=14, color="#666666")
 
     ax.set_xlim(1 - sequence_length * 0.28, sequence_length * 1.06)
-    ax.set_ylim(-0.2, backbone_y + 0.9)
+    ax.set_ylim(-0.5, backbone_y + 1.7)
     ax.set_yticks([])
     ax.set_xlabel("residue position (construct numbering)")
     ax.set_title(
         f"Literature annotations for {construct_label} ({sequence_length} aa) — "
         f"{sum(1 for r in ordered if r.kind == 'functional')} functional, "
         f"{sum(1 for r in ordered if r.kind == 'structural')} structural",
-        loc="left", fontweight="bold",
+        # Explicit fontsize smaller than rcParams' axes.titlesize (20): this title's text
+        # is unusually long for a plot title, and at the full rcParams size it runs off
+        # the figure's fixed 11in width -- shrunk locally rather than lowering
+        # axes.titlesize globally, which would undersize every other (shorter) title
+        # using this same rcParams setup (e.g. oracle/plot.py's).
+        loc="left", fontweight="bold", y=1.05, fontsize=15,
     )
     for s in ("left", "right", "top"):
         ax.spines[s].set_visible(False)
@@ -145,10 +165,30 @@ def plot_annotation_map(
     if conflict_ids:
         legend_handles.append(Rectangle((0, 0), 1, 1, fc="white", ec=CONFLICT_EDGE_COLOR, lw=1.6,
                                          label="overlaps edit/window"))
-    # Placed in the left margin (data x < 0), which is otherwise blank at every row --
-    # unlike a lower/upper corner, this can't collide with a feature row or the
-    # edit/window labels regardless of how many rows or where the window falls.
-    ax.legend(handles=legend_handles, loc="center left", frameon=False, fontsize=7.5)
+    # Below the axes, horizontally centered: at the pre-readability-pass font size, the
+    # left margin (data x < 0) had room for both this and the row labels living there
+    # ("center left" placement, vertically centered in the full ylim); at the current
+    # larger font the legend box is tall/wide enough to collide with whichever row
+    # happens to fall near vertical-center (row labels, "construct", or both -- not
+    # dependent on n_rows, so raising it here rather than shrinking the legend back down).
+    #
+    # fig.legend (figure-fraction bbox_to_anchor), not ax.legend (axes-fraction): an
+    # axes-fraction offset is relative to the *axes'* height, which grows with n_rows --
+    # a many-row protein (e.g. lysozyme's ~27 annotation rows) has a much taller axes than
+    # a 3-row test case, so the same axes-fraction offset put the legend a huge, growing
+    # absolute distance below the plot instead of a small fixed one. Figure-fraction keeps
+    # it a constant distance from the bottom of the figure regardless of n_rows.
+    fig.legend(
+        handles=legend_handles, loc="lower center", bbox_to_anchor=(0.5, 0.02),
+        ncol=len(legend_handles), frameon=False,
+    )
 
     fig.tight_layout()
+    # Explicit, after tight_layout (which would otherwise fight this): reserves the
+    # +1.3in added to fig_height above for the legend below the axes -- tight_layout's
+    # own automatic bottom margin doesn't know about a legend anchored outside the axes
+    # bbox, so left alone the legend just draws past the figure's bottom edge into (or
+    # past) the xlabel whenever the save/render path doesn't crop with bbox_inches="tight"
+    # (st.pyplot doesn't).
+    fig.subplots_adjust(bottom=1.2 / fig_height)
     return fig
