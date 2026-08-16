@@ -123,11 +123,11 @@ st.pyplot(plot_score_comparison(result.wt_score, result.chain_starting_scores, r
 st.subheader(f":material/hub: MCMC candidates (top {len(result.mcmc_candidates)})", divider="gray")
 st.dataframe(
     [
-        # "mutation" is named against edit-only (the fixed edit already applied, no
-        # compensation yet) -- these are the compensatory mutations MCMC searched for,
-        # not a diff against WT (which would also show the fixed edit itself every time).
+        # Named against true WT, not edit-only -- so the edit itself shows up in the name
+        # (e.g. "V20WHSPRAL") instead of a candidate with no extra compensatory mutation
+        # collapsing to a vacuous "identical".
         {
-            "mutation": mutation_name(result.edit_only.sequence, c.sequence),
+            "mutation": mutation_name(wt_sequence, c.sequence),
             "sequence": c.sequence,
             "combined_score": c.combined_score,
         }
@@ -224,7 +224,7 @@ else:
         pca_df = {
             "PC1": coords[:, 0],
             "PC2": coords[:, 1],
-            "mutation": [mutation_name(result.edit_only.sequence, seq) for seq in candidate_sequences],
+            "mutation": [mutation_name(wt_sequence, seq) for seq in candidate_sequences],
         }
         st.caption("PCA of each candidate's top-3 ΔΔSAE (compensated vs WT) features, unioned across candidates.")
         st.scatter_chart(pca_df, x="PC1", y="PC2")
@@ -236,7 +236,7 @@ else:
         describe_choice = st.selectbox(
             "Candidate to describe",
             candidate_sequences,
-            format_func=lambda s: mutation_name(result.edit_only.sequence, s),
+            format_func=lambda s: mutation_name(wt_sequence, s),
         )
         if st.button("Describe", icon=":material/description:"):
             with st.spinner("Re-diffing at the describable SAE config (esmc_6b)..."):

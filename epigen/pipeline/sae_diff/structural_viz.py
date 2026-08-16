@@ -55,19 +55,24 @@ INACTIVE_COLOR = "#dddddd"
 
 
 def _magnitude_to_color(value: float, vmax: float) -> str:
-    """White (0 activation) to red (`vmax`) linear colormap.
+    """White (0 activation) to orange (`vmax`) linear colormap.
 
     SAE activations from a TopK codebook are non-negative, so a simple
-    sequential (not diverging) scale is the right shape here.
+    sequential (not diverging) scale is the right shape here. Orange (not
+    red) deliberately -- the Structure viewer already colors the fixed edit
+    red (`app_pages/structure.py`'s EDIT_COLOR), so a red SAE overlay would
+    visually merge with the edit highlight at the very positions callers
+    most want to compare against it. Matches `literature/plot.py`'s own
+    EDIT_COLOR/WINDOW_COLOR orange, for consistency across the app.
     """
     if vmax <= 0:
         t = 0.0
     else:
         t = max(0.0, min(1.0, value / vmax))
-    # White (255,255,255) -> red (200,30,30).
-    r = int(255 + t * (200 - 255))
-    g = int(255 + t * (30 - 255))
-    b = int(255 + t * (30 - 255))
+    # White (255,255,255) -> orange (232,137,26).
+    r = int(255 + t * (232 - 255))
+    g = int(255 + t * (137 - 255))
+    b = int(255 + t * (26 - 255))
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
@@ -88,33 +93,32 @@ def feature_color_map(feature_vector: FeatureVector, feature_index: int) -> dict
 
 
 def align_to_reference(structure: Structure, reference: Structure, chain_id: str = "A") -> Structure:
-    """Rigidly superimpose `structure`'s chain onto `reference`'s same chain (CA-based Kabsch fit).
+    """Rigidly superimpose `structure`'s chain onto `reference`'s same chain, so every
+    structure shown in the Structure viewer -- WT, edit-only, top candidate, any other MCMC
+    candidate -- lands in the same coordinate frame as `reference` (conventionally WT)
+    before rendering, rather than each keeping whatever arbitrary absolute frame ESMFold
+    happened to output it in.
 
-    Used so every structure shown in the Structure viewer -- WT, edit-only, top
-    candidate, any other MCMC candidate -- lands in the same coordinate frame as
-    `reference` (conventionally WT) before rendering, rather than each keeping
-    whatever arbitrary absolute frame ESMFold happened to output it in.
-
-    Falls back to `structure` unaligned if the two chains don't have the same
-    number of residues (e.g. an insertion) -- Kabsch needs point-for-point CA
-    correspondence, which substitution-only edits/candidates always have, but
-    a future insertion-supporting caller might not; better to show something
-    at its own camera angle than raise.
+    Uses `superimpose_homologs` (sequence-alignment-anchored), not a plain positional Kabsch
+    fit -- WT is frequently a real PDB structure, and real crystal structures routinely have
+    a handful of residues missing from unresolved density, so its CA count doesn't reliably
+    match the ESMFold2-predicted edit-only/candidate structures' even for a substitution-only
+    edit with no length change in the *design*. A plain index-for-index Kabsch fit over
+    mismatched-length CA arrays either raises or (in an earlier version of this function)
+    silently skipped alignment entirely -- the latter is what made different Structure viewer
+    tabs appear to use different camera angles despite all being given the same fixed
+    `reference_camera`: the camera was identical, but the underlying coordinates weren't
+    actually in the same frame for it to apply to.
     """
     from io import StringIO
 
-    from biotite.structure import superimpose
+    from biotite.structure import superimpose_homologs
     from biotite.structure.io.pdb import PDBFile
 
     reference_array = reference._get_atom_array(chain_id)
     mobile_array = structure._get_atom_array(chain_id)
-    reference_ca = reference_array[reference_array.atom_name == "CA"]
-    mobile_ca = mobile_array[mobile_array.atom_name == "CA"]
-    if len(reference_ca) != len(mobile_ca):
-        return structure
 
-    _, transformation = superimpose(reference_ca, mobile_ca)
-    fitted = transformation.apply(mobile_array)
+    fitted, *_ = superimpose_homologs(reference_array, mobile_array)
 
     pdb_file = PDBFile()
     pdb_file.set_structure(fitted)

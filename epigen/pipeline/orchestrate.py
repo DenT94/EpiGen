@@ -76,6 +76,7 @@ def run_end_to_end(
     weight_evo2: float = 0.34,
     annotation_ranges: list[AnnotationRange] | None = None,
     use_modal_mcmc: bool = False,
+    checkpoint_every: int = 5,
 ) -> EndToEndResult:
     """Run the full substitution-MVP loop and return everything needed to display it.
 
@@ -123,6 +124,14 @@ def run_end_to_end(
             `modal deploy -e proto-env epigen/pipeline/oracle/modal_app.py`
             to have been run already; falls through to the laptop-orchestrated
             path's own errors if not deployed.
+        checkpoint_every: Only used when `use_modal_mcmc=True` -- how often
+            (in rounds) the Modal-side search checkpoints its chain state to
+            a Volume, so a crash/timeout only loses up to this many rounds
+            instead of the whole run. See `oracle.modal_app.run_mcmc_search_remote`
+            and `oracle.mcmc.run_mcmc_search`'s `checkpoint_dir`. Retrying with
+            identical arguments (including this one) resumes automatically;
+            no effect on the laptop-orchestrated path, which has no
+            checkpointing.
     """
     edit_positions = list(range(edit_start, edit_start + len(edit_sequence)))
     if set(edit_positions) & set(window_positions):
@@ -168,6 +177,7 @@ def run_end_to_end(
             seed=seed,
             nt_sequence=edit_only_nt_sequence,
             weight_evo2=weight_evo2,
+            checkpoint_every=checkpoint_every,
         )
         mcmc_candidates = [
             MCMCCandidate(

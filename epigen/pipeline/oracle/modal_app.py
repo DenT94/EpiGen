@@ -28,6 +28,8 @@ Call:    see `run_mcmc_search_on_modal()` below (local-side convenience
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 import modal
@@ -43,15 +45,31 @@ app = modal.App("epigen-mcmc")
 
 CREDENTIALS_SECRET = modal.Secret.from_name("epigen-nested-modal-auth", environment_name="proto-env")
 
+# Checkpoints (oracle/checkpoint.py) live here, one subdirectory per run_id, so they survive
+# a crashed/timed-out container -- see `run_mcmc_search_remote`'s docstring for how run_id is
+# derived and how resume works.
+CHECKPOINT_VOLUME = modal.Volume.from_name("epigen-mcmc-checkpoints", environment_name="proto-env", create_if_missing=True)
+CHECKPOINT_MOUNT = "/checkpoints"
+
 
 MCMC_SEARCH_TIMEOUT_S = 6 * 3600  # 6h -- was 1800s (30min), which silently killed a real ~2500-chain
-# job mid-search with *no* partial results: run_mcmc_search holds all chain state in memory
-# and only returns once, at the very end, so any timeout/crash loses the entire run's compute,
-# not just the tail. There's still no checkpointing -- this only buys more runway before that
-# same all-or-nothing failure mode recurs, not resilience to it. Modal's own hard cap is 24h.
+# job mid-search with *no* partial results: run_mcmc_search held all chain state in memory
+# and only returned once, at the very end, so any timeout/crash lost the entire run's compute,
+# not just the tail. Checkpointing (below) now buys real resilience to that, not just runway --
+# but this still stays generous since a run that resumes still has to re-enter the container and
+# re-pay whatever latency got it here. Modal's own hard cap is 24h.
 
 
-@app.function(image=image, timeout=MCMC_SEARCH_TIMEOUT_S, secrets=[CREDENTIALS_SECRET])
+def _derive_run_id(**config: Any) -> str:
+    """Deterministic run_id from a call's own config, so retrying/resuming after a crash needs
+    no extra bookkeeping on the caller's side -- the *same* Streamlit "Run" click (same sequence,
+    edit, window, MCMC settings, seed) always maps to the same checkpoint directory, the same way
+    `pipeline_cache.cached_run_end_to_end` already keys its cache off exact call args."""
+    blob = json.dumps(config, sort_keys=True, default=str)
+    return hashlib.sha1(blob.encode()).hexdigest()[:16]
+
+
+@app.function(image=image, timeout=MCMC_SEARCH_TIMEOUT_S, secrets=[CREDENTIALS_SECRET], volumes={CHECKPOINT_MOUNT: CHECKPOINT_VOLUME})
 def run_mcmc_search_remote(
     sequence: str,
     structure_pdb: str,
@@ -69,6 +87,8 @@ def run_mcmc_search_remote(
     refold_every: int | None = None,
     candidate_num: int = 5,
     seed: int | None = None,
+    checkpoint_every: int = 5,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     """Runs the whole MCMC search server-side. JSON-safe args only (Modal
     functions need serializable arguments) -- `structure_pdb` is raw PDB
@@ -78,11 +98,43 @@ def run_mcmc_search_remote(
     `starting_sequences`/`ending_sequences` from `MCMCSearchResult` survive
     the round trip too -- `orchestrate.py` uses those for a free (no extra
     Modal call) WT-vs-chain score comparison; see `oracle.mcmc.window_score`.
+
+    Checkpointed to `CHECKPOINT_VOLUME` every `checkpoint_every` rounds (see
+    `oracle.checkpoint`/`oracle.mcmc.run_mcmc_search`'s `checkpoint_dir`).
+    `run_id` names the checkpoint subdirectory; when omitted (the normal
+    case) it's derived from every other argument here, so calling this
+    function again with the *exact same* arguments after a timeout/crash
+    transparently resumes instead of restarting -- pass an explicit
+    `run_id` only to force a fresh search under otherwise-identical config.
+    The returned `run_id` is echoed back so a caller can tell them apart.
     """
     from proto_tools.entities.structures import Structure
 
     from epigen.pipeline.fold_invert_refold.run import FoldedStructure
     from epigen.pipeline.oracle.mcmc import run_mcmc_search
+
+    if run_id is None:
+        run_id = _derive_run_id(
+            sequence=sequence,
+            window_positions=window_positions,
+            chain_id=chain_id,
+            num_starting_points=num_starting_points,
+            chains_per_start=chains_per_start,
+            steps=steps,
+            temperature=temperature,
+            weight_esm2=weight_esm2,
+            weight_pmpnn=weight_pmpnn,
+            nt_sequence=nt_sequence,
+            weight_evo2=weight_evo2,
+            refold_every=refold_every,
+            candidate_num=candidate_num,
+            seed=seed,
+        )
+    checkpoint_dir = f"{CHECKPOINT_MOUNT}/{run_id}"
+
+    # Pick up any checkpoint another (e.g. crashed) container already committed for this
+    # run_id -- a Volume's local view is only as fresh as its last reload.
+    CHECKPOINT_VOLUME.reload()
 
     structure = Structure(structure=structure_pdb, structure_format="pdb")
     folded = FoldedStructure(
@@ -107,6 +159,9 @@ def run_mcmc_search_remote(
         refold_every=refold_every,
         candidate_num=candidate_num,
         seed=seed,
+        checkpoint_dir=checkpoint_dir,
+        checkpoint_every=checkpoint_every,
+        on_checkpoint=CHECKPOINT_VOLUME.commit,
     )
     return {
         "candidates": [
@@ -120,6 +175,10 @@ def run_mcmc_search_remote(
         ],
         "starting_sequences": result.starting_sequences,
         "ending_sequences": result.ending_sequences,
+        "wt_score": result.wt_score,
+        "rounds_run": result.rounds_run,
+        "converged_chain_count": result.converged_chain_count,
+        "run_id": run_id,
     }
 
 
@@ -131,6 +190,10 @@ def run_mcmc_search_on_modal(folded, window_positions: list[int], **kwargs) -> d
     to have been run (again, after this function's return shape changed from
     a bare candidate list to a dict with "candidates"/"starting_sequences"/
     "ending_sequences") before this actually returns the new shape.
+
+    Pass `run_id` explicitly (forwarded via `**kwargs`) to force a fresh
+    search instead of resuming a same-config run's checkpoint -- see
+    `run_mcmc_search_remote`'s docstring.
     """
     remote_fn = modal.Function.from_name("epigen-mcmc", "run_mcmc_search_remote", environment_name="proto-env")
     return remote_fn.remote(

@@ -56,22 +56,31 @@ def diff_blocks(reference: str, candidate: str) -> list[MutationBlock]:
     return blocks
 
 
-def mutation_name(reference: str, candidate: str) -> str:
+def mutation_name(reference: str, candidate: str, *, identical_label: str = "identical") -> str:
     """Compact single-chain mutation notation, e.g. "GR4WH_L8S_A10P".
 
-    Returns "WT" if `candidate` is identical to `reference`.
+    Returns `identical_label` if `candidate` is identical to `reference`. The
+    default is the generic "identical", not "WT" -- callers here routinely
+    name against `edit_only.sequence`, not true WT (e.g. an MCMC candidate
+    whose trajectory never found an accepted compensatory move), and "WT"
+    would misleadingly claim that sequence is wild-type when it still
+    carries the fixed edit. Pass `identical_label="WT"` explicitly at a call
+    site that really does compare against true WT.
     """
     blocks = diff_blocks(reference, candidate)
     if not blocks:
-        return "WT"
+        return identical_label
     return "_".join(f"{b.original}{b.start_position}{b.mutant}" for b in blocks)
 
 
-def multichain_mutation_name(chains: dict[str, tuple[str, str]]) -> str:
+def multichain_mutation_name(chains: dict[str, tuple[str, str]], *, identical_label: str = "identical") -> str:
     """Compact multichain mutation notation: "A:(...)-B:(...)".
 
     `chains` maps chain_id -> (reference, candidate), in the order chains
     should appear (dict insertion order) -- pass only the chains you want
-    named; a chain with no differences still renders as "A:(WT)".
+    named; a chain with no differences renders as `A:({identical_label})`.
     """
-    return "-".join(f"{chain_id}:({mutation_name(reference, candidate)})" for chain_id, (reference, candidate) in chains.items())
+    return "-".join(
+        f"{chain_id}:({mutation_name(reference, candidate, identical_label=identical_label)})"
+        for chain_id, (reference, candidate) in chains.items()
+    )

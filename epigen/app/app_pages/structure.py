@@ -33,6 +33,14 @@ def _cached_fold(sequence: str, seed: int):
     return fold_sequence(sequence, seed=seed)
 
 
+def _folded_cache_keys() -> set[tuple[str, int]]:
+    """(sequence, seed) pairs already folded via `_cached_fold` this session -- tracked
+    ourselves since `st.cache_data` has no public "is this cached" query, only "call it
+    (cheaply, on a hit)". Lets the 'Other MCMC candidate' picker default to something
+    that renders instantly instead of always defaulting to an uncached candidate."""
+    return st.session_state.setdefault("structure_folded_cache_keys", set())
+
+
 @st.cache_data(show_spinner=False)
 def _cached_reference_camera(structure_pdb: str, chain_id: str):
     """WT's fixed py2Dmol camera, cached by its own PDB text -- cheap (local PCA, no
@@ -110,6 +118,7 @@ if result is None or inputs is None:
     st.page_link("app_pages/landing.py", label="Go to Landing", icon=":material/edit_note:")
     st.stop()
 
+wt_sequence = inputs["wt_sequence"]
 edit_positions = inputs["edit_positions"]
 window_positions = inputs["window_positions"]
 chain_id = inputs["chain_id"]
@@ -176,29 +185,18 @@ elif view.endswith("Top candidate (compensated)"):
 
     sae_diff = result.sae_diffs.get(tc.candidate.sequence)
     if sae_diff is not None:
-        top_deltas = _top_ddsae_deltas(sae_diff, k=3)
-        sae_choice = st.selectbox(
-            "Color by ΔΔSAE feature",
-            ["None"] + [f"SAE{i + 1}" for i in range(len(top_deltas))],
-            help="Overlays one of the candidate's top-3 ΔΔSAE (compensated vs WT) feature "
-            "activations -- white -> red by magnitude, wherever that feature is active in the "
-            "compensated structure. Edit/compensatory positions stay highlighted on top. No "
-            "extra Modal call -- reuses the cheap esmc_300m pass already run for every candidate. "
-            "Numeric only (feature index, no label) -- esmc_300m has no published feature "
-            "descriptions; use 'Describe' below for human-readable labels.",
-        )
-        if sae_choice != "None":
-            delta = top_deltas[int(sae_choice.removeprefix("SAE")) - 1]
-            st.caption(f"{sae_choice}: feature {delta.feature_index} @ position {delta.position} (ΔΔ={delta.delta:+.3f}).")
-            color_map = feature_color_map(sae_diff.compensated, delta.feature_index) | base_color_map
-
-        st.caption(
-            "Real feature labels only exist for one specific SAE config (esmc_6b/layer60) -- "
-            "heavier, so it's a separate on-demand pass with its own (different) top-3 features."
-        )
+        # One control, not two: the numeric (esmc_300m, free) and labeled (esmc_6b/layer60,
+        # on-demand Modal call) ΔΔSAE lists live in different feature spaces, so showing both
+        # dropdowns at once ("SAE1" meaning two different features depending which one you
+        # look at) was confusing. Describing upgrades in place -- once labels are fetched, the
+        # numeric dropdown is replaced by the labeled one instead of sitting alongside it.
         describe_key = f"structure_describe_{tc.candidate.sequence}"
-        if st.button("Describe (human-readable labels)", icon=":material/description:"):
+        if not st.session_state.get(describe_key) and st.button(
+            "Describe (human-readable labels)", icon=":material/description:"
+        ):
             st.session_state[describe_key] = True
+            st.rerun()
+
         if st.session_state.get(describe_key):
             with st.spinner("Re-diffing at the describable SAE config (esmc_6b)..."):
                 try:
@@ -213,7 +211,9 @@ elif view.endswith("Top candidate (compensated)"):
                     f"SAE{i + 1}: {described.descriptions.get(d.feature_index, {}).get('label', '(no label)')}"
                     for i, d in enumerate(described.top_deltas)
                 ]
-                labeled_choice = st.selectbox("Color by labeled ΔΔSAE feature", labeled_options)
+                labeled_choice = st.selectbox(
+                    "Color by ΔΔSAE feature (esmc_6b/layer60, labeled)", labeled_options
+                )
                 if labeled_choice != "None":
                     d = described.top_deltas[labeled_options.index(labeled_choice) - 1]
                     desc = described.descriptions.get(d.feature_index, {})
@@ -222,6 +222,25 @@ elif view.endswith("Top candidate (compensated)"):
                         f"{desc.get('description', '(no description)')}"
                     )
                     color_map = feature_color_map(described.diff.compensated, d.feature_index) | base_color_map
+        else:
+            top_deltas = _top_ddsae_deltas(sae_diff, k=3)
+            sae_choice = st.selectbox(
+                "Color by ΔΔSAE feature (esmc_300m, numeric)",
+                ["None"] + [f"SAE{i + 1}" for i in range(len(top_deltas))],
+                help="Overlays one of the candidate's top-3 ΔΔSAE (compensated vs WT) feature "
+                "activations -- white -> red by magnitude, wherever that feature is active in "
+                "the compensated structure. Edit/compensatory positions stay highlighted on "
+                "top. No extra Modal call -- reuses the cheap esmc_300m pass already run for "
+                "every candidate. Numeric only (feature index, no label); click 'Describe' "
+                "above for human-readable labels instead (a different, heavier SAE config).",
+            )
+            if sae_choice != "None":
+                delta = top_deltas[int(sae_choice.removeprefix("SAE")) - 1]
+                st.caption(
+                    f"{sae_choice}: feature {delta.feature_index} @ position {delta.position} "
+                    f"(ΔΔ={delta.delta:+.3f})."
+                )
+                color_map = feature_color_map(sae_diff.compensated, delta.feature_index) | base_color_map
 
     _render(
         tc.folded.structure,
@@ -232,24 +251,42 @@ elif view.endswith("Top candidate (compensated)"):
     )
 
 else:  # "Other MCMC candidate"
+    cache_keys = _folded_cache_keys()
+    already_cached = [c for c in other_candidates if (c.sequence, seed) in cache_keys]
+    # Default to the top-scoring candidate that's already folded (renders instantly, no Modal
+    # call) instead of always defaulting to other_candidates[0] regardless of cache state --
+    # other_candidates is already ranked by combined_score, so the first cached one found is
+    # also the best-scoring one among those free to show.
+    default_choice = already_cached[0] if already_cached else other_candidates[0]
+
     candidate_choice = st.selectbox(
         "Candidate",
         other_candidates,
-        format_func=lambda c: f"{mutation_name(result.edit_only.sequence, c.sequence)}  (combined_score={c.combined_score:.3f})",
+        index=other_candidates.index(default_choice),
+        format_func=lambda c: (
+            f"{mutation_name(wt_sequence, c.sequence)}  (combined_score={c.combined_score:.3f})"
+            + ("  [cached]" if (c.sequence, seed) in cache_keys else "")
+        ),
     )
     compensatory_positions = _diff_positions(result.edit_only.sequence, candidate_choice.sequence, window_positions)
+    is_cached = (candidate_choice.sequence, seed) in cache_keys
     st.caption(
         f"{len(compensatory_positions)} compensatory mutation(s) vs edit-only. "
-        "Not part of the automatic pipeline (only the top candidate gets refolded/TM-gated) -- "
-        "folding this one is an extra on-demand Modal call."
+        "Not part of the automatic pipeline (only the top candidate gets refolded/TM-gated)"
+        + ("." if is_cached else " -- folding this one is an extra on-demand Modal call.")
     )
-    if st.button("Fold & view this candidate", icon=":material/view_in_ar:"):
+
+    # Cached candidates render immediately (no button needed, it's a free cache hit);
+    # uncached ones still require an explicit click before spending a Modal call.
+    show = is_cached or st.button("Fold & view this candidate", icon=":material/view_in_ar:")
+    if show:
         with st.spinner("Folding candidate (Modal)..."):
             try:
                 folded = _cached_fold(candidate_choice.sequence, seed)
             except Exception as exc:
                 st.exception(exc)
                 st.stop()
+        cache_keys.add((candidate_choice.sequence, seed))
         st.caption(f"pLDDT={folded.plddt:.3f} (no self-consistency TM-score -- this candidate wasn't refold-gated).")
         _legend(edit=True, compensatory=True)
         color_map = {p: EDIT_COLOR for p in edit_positions} | {p: COMPENSATORY_COLOR for p in compensatory_positions}
