@@ -13,9 +13,12 @@ from __future__ import annotations
 import streamlit as st
 
 from epigen.pipeline.fold_invert_refold.run import fold_sequence
+from epigen.pipeline.naming import mutation_name
+from epigen.pipeline.sae_diff.run import top_k_deltas
 from epigen.pipeline.sae_diff.structural_viz import (
     align_to_reference,
     compute_reference_camera,
+    feature_color_map,
     render_structure_html,
 )
 
@@ -39,9 +42,27 @@ def _cached_reference_camera(structure_pdb: str, chain_id: str):
     return compute_reference_camera(Structure(structure=structure_pdb, structure_format="pdb"), chain_id)
 
 
+@st.cache_data(show_spinner=False)
+def _cached_describe_candidate(wt_sequence: str, edit_only_sequence: str, candidate_sequence: str, k: int):
+    """Cached wrapper around `sae_diff.describe.describe_candidate` -- a real Modal call
+    (re-diffs at esmc_6b/layer60), so identical args should hit cache instead of re-spending it,
+    same as `_cached_fold`."""
+    from epigen.pipeline.sae_diff.describe import describe_candidate
+
+    return describe_candidate(wt_sequence, edit_only_sequence, candidate_sequence, k=k)
+
+
 def _diff_positions(reference: str, other: str, positions: list[int]) -> list[int]:
     """1-indexed positions in `positions` where `other` differs from `reference`."""
     return [p for p in positions if reference[p - 1] != other[p - 1]]
+
+
+def _top_ddsae_deltas(sae_diff, k: int = 3):
+    """Top-k ΔΔSAE deltas for `sae_diff` -- `compensated_vs_original`, the literal WT-vs-MU_STAR
+    double diff mypipelinethoughts.md calls ΔΔSAE (see `sae_diff.pca`'s module docstring).
+    Already computed for every candidate by the cheap esmc_300m pass in orchestrate.py -- no
+    extra Modal call to pick from these, unlike design.py's heavier "Describe" (esmc_6b/layer60)."""
+    return top_k_deltas(sae_diff.compensated_vs_original, k=k)
 
 
 def _render(
@@ -146,7 +167,62 @@ elif view.endswith("Top candidate (compensated)"):
         f"{len(compensatory_positions)} compensatory mutation(s))."
     )
     _legend(edit=True, compensatory=True)
-    color_map = {p: EDIT_COLOR for p in edit_positions} | {p: COMPENSATORY_COLOR for p in compensatory_positions}
+    # Edit/compensatory highlighting always wins over any SAE overlay below -- both overlay
+    # blocks merge as `overlay | base_color_map`, never chained onto each other (chaining would
+    # make the second overlay a no-op: `feature_color_map` returns a color for *every* position,
+    # so it would always lose the merge to an already-full first overlay sitting on the right).
+    base_color_map = {p: EDIT_COLOR for p in edit_positions} | {p: COMPENSATORY_COLOR for p in compensatory_positions}
+    color_map = base_color_map
+
+    sae_diff = result.sae_diffs.get(tc.candidate.sequence)
+    if sae_diff is not None:
+        top_deltas = _top_ddsae_deltas(sae_diff, k=3)
+        sae_choice = st.selectbox(
+            "Color by ΔΔSAE feature",
+            ["None"] + [f"SAE{i + 1}" for i in range(len(top_deltas))],
+            help="Overlays one of the candidate's top-3 ΔΔSAE (compensated vs WT) feature "
+            "activations -- white -> red by magnitude, wherever that feature is active in the "
+            "compensated structure. Edit/compensatory positions stay highlighted on top. No "
+            "extra Modal call -- reuses the cheap esmc_300m pass already run for every candidate. "
+            "Numeric only (feature index, no label) -- esmc_300m has no published feature "
+            "descriptions; use 'Describe' below for human-readable labels.",
+        )
+        if sae_choice != "None":
+            delta = top_deltas[int(sae_choice.removeprefix("SAE")) - 1]
+            st.caption(f"{sae_choice}: feature {delta.feature_index} @ position {delta.position} (ΔΔ={delta.delta:+.3f}).")
+            color_map = feature_color_map(sae_diff.compensated, delta.feature_index) | base_color_map
+
+        st.caption(
+            "Real feature labels only exist for one specific SAE config (esmc_6b/layer60) -- "
+            "heavier, so it's a separate on-demand pass with its own (different) top-3 features."
+        )
+        describe_key = f"structure_describe_{tc.candidate.sequence}"
+        if st.button("Describe (human-readable labels)", icon=":material/description:"):
+            st.session_state[describe_key] = True
+        if st.session_state.get(describe_key):
+            with st.spinner("Re-diffing at the describable SAE config (esmc_6b)..."):
+                try:
+                    described = _cached_describe_candidate(
+                        inputs["wt_sequence"], result.edit_only.sequence, tc.candidate.sequence, 3
+                    )
+                except Exception as exc:
+                    st.exception(exc)
+                    described = None
+            if described is not None:
+                labeled_options = ["None"] + [
+                    f"SAE{i + 1}: {described.descriptions.get(d.feature_index, {}).get('label', '(no label)')}"
+                    for i, d in enumerate(described.top_deltas)
+                ]
+                labeled_choice = st.selectbox("Color by labeled ΔΔSAE feature", labeled_options)
+                if labeled_choice != "None":
+                    d = described.top_deltas[labeled_options.index(labeled_choice) - 1]
+                    desc = described.descriptions.get(d.feature_index, {})
+                    st.caption(
+                        f"feature {d.feature_index} @ position {d.position} (ΔΔ={d.delta:+.3f}): "
+                        f"{desc.get('description', '(no description)')}"
+                    )
+                    color_map = feature_color_map(described.diff.compensated, d.feature_index) | base_color_map
+
     _render(
         tc.folded.structure,
         color_map,
@@ -159,7 +235,7 @@ else:  # "Other MCMC candidate"
     candidate_choice = st.selectbox(
         "Candidate",
         other_candidates,
-        format_func=lambda c: f"{c.sequence[:24]}...  (combined_score={c.combined_score:.3f})",
+        format_func=lambda c: f"{mutation_name(result.edit_only.sequence, c.sequence)}  (combined_score={c.combined_score:.3f})",
     )
     compensatory_positions = _diff_positions(result.edit_only.sequence, candidate_choice.sequence, window_positions)
     st.caption(

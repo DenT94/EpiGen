@@ -16,6 +16,7 @@ import streamlit as st
 from epigen.app import run_history
 from epigen.app.pipeline_cache import cached_run_end_to_end
 from epigen.pipeline.literature import attach_papers, get_accession_metadata, plot_annotation_map
+from epigen.pipeline.naming import mutation_name
 
 
 def _render_results(result, inputs: dict) -> None:
@@ -105,7 +106,17 @@ def _render_results(result, inputs: dict) -> None:
 
     st.subheader(f":material/hub: MCMC candidates (top {len(result.mcmc_candidates)})", divider="gray")
     st.dataframe(
-        [{"sequence": c.sequence, "combined_score": c.combined_score} for c in result.mcmc_candidates],
+        [
+            # "mutation" is named against edit-only (the fixed edit already applied, no
+            # compensation yet) -- these are the compensatory mutations MCMC searched for,
+            # not a diff against WT (which would also show the fixed edit itself every time).
+            {
+                "mutation": mutation_name(result.edit_only.sequence, c.sequence),
+                "sequence": c.sequence,
+                "combined_score": c.combined_score,
+            }
+            for c in result.mcmc_candidates
+        ],
         width="stretch",
         column_config={
             "combined_score": st.column_config.NumberColumn("Combined score", format="%.3f"),
@@ -159,7 +170,7 @@ def _render_results(result, inputs: dict) -> None:
             pca_df = {
                 "PC1": coords[:, 0],
                 "PC2": coords[:, 1],
-                "sequence": [seq[:12] + "..." for seq in candidate_sequences],
+                "mutation": [mutation_name(result.edit_only.sequence, seq) for seq in candidate_sequences],
             }
             st.caption("PCA of each candidate's top-3 ΔΔSAE (compensated vs WT) features, unioned across candidates.")
             st.scatter_chart(pca_df, x="PC1", y="PC2")
@@ -168,7 +179,11 @@ def _render_results(result, inputs: dict) -> None:
                 "Describe a candidate's top SAE features with human-readable labels "
                 "(esmc_6b/layer60 -- heavier, on-demand only)."
             )
-            describe_choice = st.selectbox("Candidate to describe", candidate_sequences, format_func=lambda s: s[:20] + "...")
+            describe_choice = st.selectbox(
+                "Candidate to describe",
+                candidate_sequences,
+                format_func=lambda s: mutation_name(result.edit_only.sequence, s),
+            )
             if st.button("Describe", icon=":material/description:"):
                 with st.spinner("Re-diffing at the describable SAE config (esmc_6b)..."):
                     try:
