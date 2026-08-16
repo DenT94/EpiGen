@@ -9,11 +9,15 @@ each expert's score fresh every round (no stale precomputed table, unlike a
 position-independent design).
 
 ESM2/ProteinMPNN score per-position AA log-probs, summed over the window
-(see `window_score`). Evo2 is different in kind -- a single whole-nt-sequence
-causal log-likelihood, not a per-position AA table -- so it enters as a third
-additive term rather than another per-position sum; see oracle/evo2_scoring.py
-and oracle/codon.py for why and how the nt sequence is carried alongside the
-AA sequence.
+(see `window_score`). Evo2 gets the same window-restricted treatment via a
+different route: `oracle.evo2_scoring.window_log_prob_batch` pulls Evo2's
+own per-nucleotide log-probabilities (`Evo2ScoringConfig.return_logits=True`)
+and sums just the codons at the window's AA positions, rather than averaging
+over the whole nt sequence the way `nt_sequence_score_batch`'s
+`avg_log_likelihood` does -- see oracle/evo2_scoring.py and oracle/codon.py
+for why and how the nt sequence is carried alongside the AA sequence, and
+for why this per-candidate table isn't reusable across sequences the way
+ESM2/ProteinMPNN's are (Evo2 is autoregressive).
 
 Meant to be called from inside `oracle/modal_app.py`'s Modal function, so
 these per-round calls to the already-deployed esm2/proteinmpnn/evo2 services
@@ -35,7 +39,7 @@ from epigen.pipeline.fold_invert_refold.run import (
 from epigen.pipeline.oracle import checkpoint as checkpoint_store
 from epigen.pipeline.oracle.checkpoint import ChainCheckpoint, CheckpointState
 from epigen.pipeline.oracle.codon import apply_aa_substitution_to_nt
-from epigen.pipeline.oracle.evo2_scoring import nt_sequence_score_batch
+from epigen.pipeline.oracle.evo2_scoring import window_log_prob_batch
 from epigen.pipeline.oracle.scoring import (
     CANONICAL_AA,
     PositionScores,
@@ -58,10 +62,13 @@ def window_score(
     Public (not `_window_score`) so a caller with its own `esm2_scores`/`pmpnn_scores`
     tables -- e.g. the ones `orchestrate.py` already computes once for the oracle
     sanity checks -- can score an arbitrary sequence (WT, an MCMC chain's starting or
-    ending point, ...) at zero extra Modal cost, using the same ESM2+ProteinMPNN
-    formula the search itself optimizes (Evo2's whole-sequence term isn't included --
-    it isn't a per-position table, so it can't be reused this way without its own
-    fresh Modal call per sequence).
+    ending point, ...) at zero extra Modal cost, using the ESM2+ProteinMPNN portion of
+    what the search itself optimizes. Evo2's contribution isn't in this function --
+    see `oracle.evo2_scoring.window_log_prob_batch` for the equivalent window-restricted
+    Evo2 term -- because unlike `esm2_scores`/`pmpnn_scores`, it can't be computed once
+    and reused across arbitrary sequences (Evo2 is autoregressive; its table is only
+    valid for the exact sequence it was computed on), so there's no single cached table
+    a caller here could reuse for free the way this function's other two arguments are.
     """
     total = 0.0
     for pos in window_positions:
@@ -226,7 +233,9 @@ def run_mcmc_search(
         # Round 0: score every chain's starting sequence once, to seed `score`.
         esm2_batch = position_scores_esm2_batch([c.sequence for c in chains])
         pmpnn_batch = position_scores_proteinmpnn_batch(folded.structure, [c.sequence for c in chains])
-        evo2_batch = nt_sequence_score_batch([c.nt_sequence for c in chains]) if use_evo2 else [0.0] * len(chains)
+        evo2_batch = (
+            window_log_prob_batch([c.nt_sequence for c in chains], window_positions) if use_evo2 else [0.0] * len(chains)
+        )
         for chain, esm2_scores, pmpnn_scores, evo2_score in zip(chains, esm2_batch, pmpnn_batch, evo2_batch, strict=True):
             chain.score = (
                 window_score(chain.sequence, window_positions, esm2_scores, pmpnn_scores, weight_esm2, weight_pmpnn)
@@ -271,7 +280,7 @@ def run_mcmc_search(
 
         esm2_batch = position_scores_esm2_batch(proposals)
         pmpnn_batch = position_scores_proteinmpnn_batch(folded.structure, proposals)
-        evo2_batch = nt_sequence_score_batch(nt_proposals) if use_evo2 else [0.0] * len(active_indices)
+        evo2_batch = window_log_prob_batch(nt_proposals, window_positions) if use_evo2 else [0.0] * len(active_indices)
 
         for i, proposed_seq, esm2_scores, pmpnn_scores, evo2_score, proposed_nt in zip(
             active_indices, proposals, esm2_batch, pmpnn_batch, evo2_batch, nt_proposals or [None] * len(active_indices), strict=True

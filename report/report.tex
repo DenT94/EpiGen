@@ -1,0 +1,324 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{parskip}
+\usepackage{listings}
+\lstset{basicstyle=\ttfamily\small, breaklines=true, columns=fullflexible}
+
+\definecolor{warnbg}{RGB}{255,243,205}
+\newcommand{\warnbox}[1]{%
+  \par\noindent\colorbox{warnbg}{\parbox{\dimexpr\linewidth-2\fboxsep}{\textbf{Inconsistency:} #1}}\par\vspace{4pt}
+}
+
+\title{EpiGen: what every ``score'' in the oracle/MCMC pipeline actually means}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section*{Why this document exists}
+
+The scoring machinery grew in two places at once (this session and a parallel
+one working the same files), and the word ``score'' now refers to at least
+five distinct quantities, two of which are both called \texttt{wt\_score} and
+disagree with each other. This is a precise map of what each one is, where
+it's computed, what it's used for, and where the definitions currently
+conflict.
+
+\tableofcontents
+
+\section{The three underlying experts}
+
+Every score in the pipeline is built from three independent models, each
+queried on the \emph{compensatory window} (\texttt{window\_positions}) or on
+a whole candidate sequence.
+
+\begin{description}
+  \item[ESM2] (\texttt{oracle/scoring.py}) --- per-position amino-acid
+    log-probabilities, $P(\text{aa}_i \mid \text{sequence})$, from a single
+    unmasked forward pass. This is an \emph{approximation} of the true
+    masked-marginal pseudo-log-likelihood ($P(\text{aa}_i \mid$ sequence with
+    position $i$ masked$)$, which would need $L$ forward passes for a
+    length-$L$ sequence); the model gets to see the residue it's predicting.
+    Traded deliberately for speed: 1 pass instead of $L$.
+  \item[ProteinMPNN] (\texttt{oracle/scoring.py}) --- per-position
+    amino-acid log-probabilities \emph{conditioned on the backbone
+    structure}, $P(\text{aa}_i \mid \text{structure}, \text{context})$.
+    Already single-pass (autoregressive teacher-forcing), no approximation
+    needed.
+  \item[Evo2] (\texttt{oracle/evo2\_scoring.py}) --- called here for one
+    scalar \texttt{avg\_log\_likelihood} per \emph{whole nucleotide
+    sequence} (causal: mean of $P(x_t \mid x_{<t})$ over the sequence).
+    Operates on DNA, not protein --- the AA sequence is reverse-translated
+    to nt via \texttt{oracle/codon.py}, and every accepted AA substitution
+    during the search updates the corresponding codon.
+    \textbf{Evo2 can in fact return per-position logits}
+    (\texttt{Evo2ScoringConfig.return\_logits=True} $\to$ a
+    \texttt{(seq\_len, vocab\_size)} table, the same shape ESM2/ProteinMPNN
+    already return) --- \texttt{oracle/evo2\_scoring.py} simply never asks
+    for them, only ever reading \texttt{avg\_log\_likelihood}. See the note
+    at the end of Section~\ref{sec:window} for why that's not a trivial gap
+    to close.
+\end{description}
+
+Both ESM2 and ProteinMPNN expose \texttt{\_batch} variants that score many
+sequences in a single Modal call --- this is what lets the MCMC round loop
+recompute every chain's proposal in one call per expert per round, instead of
+one call per chain.
+
+\section{\texttt{window\_score}: the shared per-position formula}
+\label{sec:window}
+
+\texttt{oracle/mcmc.py}'s \texttt{window\_score} is the one formula almost
+everything else is built from:
+
+\begin{equation}
+  \texttt{window\_score}(s) = \sum_{p \,\in\, \text{window\_positions}}
+    \Big[ w_{\text{esm2}} \cdot \text{ESM2}(p, s_p) \;+\; w_{\text{pmpnn}} \cdot \text{MPNN}(p, s_p) \Big]
+\end{equation}
+
+where $s_p$ is the amino acid sequence $s$ has at position $p$, and
+$\text{ESM2}(p, a)$ / $\text{MPNN}(p, a)$ are the two experts' precomputed
+per-position log-probability tables for amino acid $a$ at position $p$.
+
+Two properties matter:
+
+\begin{itemize}
+  \item \textbf{It only sums over \texttt{window\_positions}}, never the
+    whole sequence. This is intentional, not a shortcut: the fixed edit and
+    every other unchanged residue contribute an identical constant to every
+    candidate's score, so they cancel out of any accept/reject comparison
+    and are simply omitted.
+  \item \textbf{Evo2 is not in it} --- not because it \emph{can't} be (see
+    the correction above: it can return a per-position table too), but
+    because the codebase doesn't currently fetch or use that table. It is
+    instead added as a separate whole-sequence additive term wherever the
+    full search objective is needed (Section~\ref{sec:combined}).
+\end{itemize}
+
+\texttt{window\_score} is a \emph{public} function specifically so a caller
+holding its own \texttt{esm2\_scores}/\texttt{pmpnn\_scores} tables (e.g.\
+ones already spent on the oracle sanity checks, Section~\ref{sec:sanity}) can
+score an arbitrary sequence --- WT, a chain's starting point, a chain's
+ending point --- at zero extra Modal cost, using the exact formula the search
+itself optimizes minus the Evo2 term.
+
+\paragraph{Could Evo2's per-position logits be folded into \texttt{window\_score} the same way?}
+Not as a direct drop-in, for two reasons. First, a \emph{vocabulary}
+mismatch: Evo2's logits are over its nucleotide vocabulary, not the 20-AA
+\texttt{CANONICAL\_AA} vocabulary \texttt{window\_score} sums over --- using
+them at an amino-acid position would mean aggregating each codon's 3
+nucleotide log-probs into one per-AA-position value first (mechanically
+possible via \texttt{oracle/codon.py}'s existing AA-position $\leftrightarrow$
+codon-triplet mapping, but real work, not a rename). Second, and more
+fundamentally, Evo2 is \emph{autoregressive}: its logit at position $t$ is
+conditioned on everything before $t$, unlike ESM2's single-pass
+approximation or ProteinMPNN's structure-conditioning, neither of which has
+that directional dependency. A table computed once on \texttt{edit\_only}
+would be systematically wrong for any candidate that differs from
+\texttt{edit\_only} \emph{upstream} of a given window position --- so even
+with \texttt{return\_logits=True}, reusing one cached table across arbitrary
+candidates the way \texttt{window\_score} currently reuses the ESM2/
+ProteinMPNN tables would not be correct without more care (at minimum,
+re-fetching Evo2 logits per candidate rather than reusing one shared table).
+
+\section{\texttt{combined\_score}: what the search actually optimizes}
+\label{sec:combined}
+
+The number shown in the ``MCMC candidates'' table
+(\texttt{MCMCCandidate.combined\_score}) and the number the round loop
+accepts/rejects on is:
+
+\begin{equation}
+  \texttt{combined\_score}(s) = \texttt{window\_score}(s) \;+\; w_{\text{evo2}} \cdot \text{Evo2}(s)
+\end{equation}
+
+$\text{Evo2}(s)$ is only computed (and only added) when Evo2 scoring is
+enabled, i.e.\ when a nucleotide sequence was supplied
+(\texttt{orchestrate.py}'s \texttt{use\_evo2}, \textbf{default
+\texttt{True}}). When Evo2 is off, \texttt{combined\_score} \emph{is}
+\texttt{window\_score} --- the two coincide, which is presumably why it
+looked from the outside like ``the score'' was always just ESM2+ProteinMPNN.
+With Evo2 on (the default), they are not the same number.
+
+\warnbox{Every docstring/UI caption I wrote for the results-page histogram
+says ``ESM2+ProteinMPNN, Evo2 excluded'' --- that's accurate for what the
+histogram plots, but it made it look like Evo2 wasn't part of the pipeline at
+all. It \emph{is} part of \texttt{combined\_score}, by default. Only the
+free, no-extra-Modal-call comparison plot excludes it.}
+
+\section{The oracle sanity checks: \texttt{expert\_correlation} and \texttt{fraction\_below\_wt}}
+\label{sec:sanity}
+
+Computed once, before MCMC starts, in \texttt{oracle/correlation.py}. These
+are diagnostics on the \emph{full substitution space} at the window
+positions --- every possible single-residue swap, not sequences the search
+actually visited.
+
+\begin{description}
+  \item[\texttt{expert\_agreement}] Pearson correlation between ESM2's and
+    ProteinMPNN's per-(position, amino acid) log-likelihood \emph{deltas
+    versus the reference residue's own score} at that position. Low
+    correlation is the desired outcome --- it means the two experts are
+    contributing independent information, not both re-deriving the same
+    signal (per \texttt{mypipelinethoughts.md} step 4).
+  \item[\texttt{fraction\_below\_wt}] Fraction of (position, amino acid)
+    substitutions whose $w_{\text{esm2}}\text{ESM2} + w_{\text{pmpnn}}\text{MPNN}$
+    combined score is \emph{below} the reference residue's own combined
+    score at that position. A sanity check that the window isn't
+    uniformly hostile to substitution before trusting any candidate MCMC
+    finds.
+\end{description}
+
+\warnbox{Both functions take a parameter literally named \texttt{wt\_sequence},
+but \texttt{orchestrate.py} always calls them with
+\texttt{edit\_only.sequence}, never true WT. The parameter name means ``the
+reference sequence this comparison is relative to,'' not literal wild-type
+--- same naming looseness that caused the \texttt{mutation\_name} ``WT''
+mislabeling bug fixed earlier this session (Section~\ref{sec:naming}).}
+
+\section{\texorpdfstring{The \texttt{wt\_score} collision}{The wt\_score collision}}
+\label{sec:collision}
+
+This is the actual source of the confusion. \textbf{Two different
+quantities are both currently called \texttt{wt\_score}}, computed in two
+different files, by two different sessions, for two different purposes:
+
+\begin{center}
+\begin{tabular}{@{}p{0.24\linewidth}p{0.36\linewidth}p{0.36\linewidth}@{}}
+\toprule
+ & \texttt{MCMCSearchResult.wt\_score} & \texttt{EndToEndResult.wt\_score} \\
+\midrule
+\textbf{Where computed} & \texttt{oracle/mcmc.py}, inside \texttt{run\_mcmc\_search}, at round 0 & \texttt{orchestrate.py}, separately, after the search returns \\
+\textbf{Formula} & \texttt{combined\_score} of the unmutated starting chain (\texttt{window\_score + w\_evo2*Evo2} if Evo2 enabled) & \texttt{window\_score} only, hardcoded weights $0.5/0.5$, \textbf{no Evo2 term ever} \\
+\textbf{Used for} & Per-chain \emph{freeze threshold}: a chain stops proposing further mutations once its score exceeds this (early stopping / convergence) & The dashed vertical reference line on the results-page starting/ending-score histogram \\
+\textbf{Currently wired to UI?} & No --- \texttt{orchestrate.py} does not read this field at all & Yes, this is what \texttt{plot\_score\_comparison} actually draws \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{These are different numbers whenever Evo2 is enabled} (the default).
+\texttt{orchestrate.py} currently ignores the search's own \texttt{wt\_score}
+/ \texttt{rounds\_run} / \texttt{converged\_chain\_count} fields entirely and
+recomputes a narrower version itself from scratch, using the
+\texttt{esm2\_scores}/\texttt{pmpnn\_scores} tables it already has lying
+around from Section~\ref{sec:sanity}'s sanity checks.
+
+\subsection*{Why it happened}
+
+Two sessions extended \texttt{run\_mcmc\_search} independently on the same
+underlying idea (``compare against the WT/edit-only baseline'') for two
+different reasons: I added \texttt{starting\_sequences}/
+\texttt{ending\_sequences} plus a post-hoc, Modal-call-free comparison plot
+for the results page; the other session added early-stopping (freeze a chain
+once it beats the unmutated baseline) directly inside the search loop, which
+needed its own baseline computed \emph{during} the search, with the full
+objective it's actually optimizing, not just the window-only piece I use for
+the free comparison.
+
+\subsection*{What this means practically right now}
+
+\begin{itemize}
+  \item The results-page histogram's WT dashed line is \textbf{narrower}
+    than what the search itself used to decide convergence, whenever Evo2 is
+    on. A chain can legitimately be ``frozen'' (converged, per the search's
+    own \texttt{wt\_score}) while still plotting on the wrong side of the
+    histogram's dashed line (per the narrower \texttt{window\_score}-only
+    baseline).
+  \item \texttt{rounds\_run} and \texttt{converged\_chain\_count} --- real,
+    useful information about whether the search actually finished early or
+    ran the full \texttt{steps} --- aren't surfaced anywhere in the UI yet.
+  \item Nothing is silently \emph{wrong} in the sense of a crash or a raised
+    exception; the two numbers are each internally consistent for their own
+    purpose. They're just both named \texttt{wt\_score}, which is the actual
+    bug.
+\end{itemize}
+
+\subsection*{Options going forward (not yet decided)}
+
+\begin{enumerate}
+  \item \textbf{Unify on the search's own \texttt{wt\_score}.} Drop
+    orchestrate.py's separate computation; use
+    \texttt{mcmc\_result.wt\_score} (and \texttt{chain\_starting\_scores}/
+    \texttt{ending\_scores} recomputed with the Evo2 term included, at the
+    cost of one extra Evo2 call per chain start/end) for the histogram too.
+    Makes the plot match \texttt{combined\_score} exactly; costs more Modal
+    calls.
+  \item \textbf{Keep both, rename one.} E.g.\ rename
+    \texttt{EndToEndResult.wt\_score} to \texttt{wt\_window\_score} to make
+    the scope explicit everywhere it's displayed, and leave it
+    intentionally Evo2-free (cheap, no extra Modal calls). Cheapest fix,
+    doesn't reconcile the actual numeric disagreement, just stops it being
+    mislabeled.
+  \item \textbf{Surface both, explained.} Show \texttt{rounds\_run} /
+    \texttt{converged\_chain\_count} on the results page, and label the
+    histogram's baseline explicitly as ``ESM2+ProteinMPNN only, Evo2
+    excluded'' directly on the chart, not just in a caption.
+\end{enumerate}
+
+\section{Naming: what ``WT'' means at each call site}
+\label{sec:naming}
+
+A recurring, related source of confusion: the string ``WT'' and the
+parameter name \texttt{wt\_sequence} get reused loosely throughout the
+codebase to mean ``the reference/baseline sequence for this particular
+comparison,'' which is \emph{usually} \texttt{edit\_only.sequence} (WT with
+the fixed edit already applied), not literal wild-type.
+
+\begin{center}
+\begin{tabular}{@{}p{0.42\linewidth}p{0.58\linewidth}@{}}
+\toprule
+Call site & What ``reference'' actually means there \\
+\midrule
+\texttt{correlation.expert\_agreement}/\texttt{fraction\_below\_wt} & \texttt{edit\_only.sequence} \\
+\texttt{mcmc.run\_mcmc\_search}'s internal \texttt{wt\_score} & \texttt{folded.sequence}, which \texttt{orchestrate.py} always passes as \texttt{edit\_only} \\
+\texttt{naming.mutation\_name} (now fixed) & Caller-supplied; \texttt{results.py}/\texttt{structure.py} now correctly pass true \texttt{wt\_sequence}, after a bug where they passed \texttt{edit\_only.sequence} and a candidate identical to it rendered as the string \texttt{"WT"} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The \texttt{mutation\_name} case was an actual shipped bug (fixed this
+session): an MCMC candidate whose trajectory never found an accepted
+compensatory move is identical to \texttt{edit\_only}, not to true WT --- it
+still carries the fixed edit. Labeling it \texttt{"WT"} claimed something
+false. It now names against true \texttt{wt\_sequence}, so such a candidate
+renders as just the edit itself (e.g.\ \texttt{M1A}) instead of a misleading
+\texttt{"WT"}.
+
+\section{A fourth, unrelated ``score'': SAE $\Delta\Delta$}
+
+Worth naming explicitly so it doesn't get folded into the above by accident:
+the SAE feature deltas (\texttt{sae\_diff/run.py}, surfaced in the Structure
+viewer's ``Color by $\Delta\Delta$SAE feature'' dropdowns and the results
+page's PCA scatter) are \textbf{not} an oracle score at all. They're
+interpretability feature \emph{activations} from ESM~C's sparse autoencoder
+--- a completely different model, a completely different notion of
+``score,'' with no relationship to \texttt{window\_score}/
+\texttt{combined\_score} beyond happening to also be a number attached to a
+candidate sequence. Don't try to compare a $\Delta\Delta$SAE value against a
+\texttt{combined\_score} value; they're not on the same scale or measuring
+the same thing.
+
+\section{Quick reference}
+
+\begin{center}
+\begin{tabular}{@{}p{0.28\linewidth}p{0.16\linewidth}p{0.5\linewidth}@{}}
+\toprule
+Quantity & Includes Evo2? & Where \\
+\midrule
+\texttt{window\_score} & No & \texttt{oracle/mcmc.py} \\
+\texttt{combined\_score} (candidates table) & Yes, if enabled (default on) & \texttt{oracle/mcmc.py} \\
+\texttt{MCMCSearchResult.wt\_score} (freeze threshold) & Yes, if enabled & \texttt{oracle/mcmc.py} \\
+\texttt{EndToEndResult.wt\_score} (histogram baseline) & \textbf{Never} & \texttt{orchestrate.py} \\
+\texttt{expert\_correlation} & N/A (ESM2 vs MPNN agreement, not a fitness score) & \texttt{oracle/correlation.py} \\
+\texttt{fraction\_below\_wt} & No & \texttt{oracle/correlation.py} \\
+SAE $\Delta\Delta$ & N/A (different model entirely) & \texttt{sae\_diff/run.py} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\end{document}
