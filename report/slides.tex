@@ -1,0 +1,169 @@
+% EpiGen -- 5-minute pitch deck (re:AGENT hackathon).
+% Beamer now; plan is to convert to .pptx for Google Slides once content is locked
+% (pandoc -t pptx works cleanly on plain itemize/graphicx slides -- avoided TikZ/
+% overlays/complex layouts here specifically so that conversion stays easy).
+\documentclass[aspectratio=169]{beamer}
+
+\usetheme{Madrid}
+\usecolortheme{seahorse}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
+
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\usepackage{booktabs}
+
+\title{EpiGen}
+\subtitle{Protease-gated selective antibiotics, with agentic compensatory-mutation design}
+\author{}
+\date{re:AGENT hackathon --- \today}
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+\end{frame}
+
+% ---------------------------------------------------------------------------
+\begin{frame}{The problem}
+  \begin{itemize}
+    \item Broad-spectrum antibiotic proteins kill \textbf{everything} --- pathogens
+      \emph{and} commensal (``good'') bacteria.
+    \item Killing commensals has real downstream cost: dysbiosis, infection
+      susceptibility, long antibiotic-course side effects.
+    \item We want a drug that's still fully active against pathogens, but
+      \textbf{locally silenced} wherever a healthy microbiome already is.
+  \end{itemize}
+\end{frame}
+
+% ---------------------------------------------------------------------------
+\begin{frame}{The idea: a protease-gated switch}
+  \begin{itemize}
+    \item Commensal \emph{Lactobacillus} spp.\ secrete a protease (lactocepin,
+      PrtP) that pathogens don't.
+    \item Engineer lactocepin's substrate motif into a surface-exposed loop of
+      the antibiotic protein.
+    \item Near commensals: local protease cleaves the motif, inactivates the
+      drug. Everywhere else: drug stays fully active.
+  \end{itemize}
+  \vspace{0.5em}
+  \begin{block}{The catch}
+    Inserting a foreign motif destabilizes the scaffold. We need
+    \textbf{compensatory mutations} that restore structural stability
+    \emph{without} burying the motif (it has to stay cleavable).
+  \end{block}
+\end{frame}
+
+% ---------------------------------------------------------------------------
+\begin{frame}{Demo case}
+  \begin{columns}
+    \begin{column}{0.55\textwidth}
+      \begin{itemize}
+        \item \textbf{Scaffold:} hen egg-white lysozyme --- 129 aa,
+          well-characterized, fast-folding, real PDB structure (193L).
+        \item \textbf{Insertion:} lactocepin substrate motif, in a
+          surface-exposed loop.
+        \item \textbf{Goal:} pathogen-killing activity preserved; activity
+          locally silenced near \emph{Lactobacillus}.
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.45\textwidth}
+      \centering
+      % TODO screenshot: WT lysozyme structure, edit-loop region highlighted
+      \fbox{\parbox[c][4cm][c]{\linewidth}{\centering\small
+        [screenshot: structure viewer,\\ WT with edit loop highlighted]}}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ---------------------------------------------------------------------------
+\begin{frame}{Pipeline: fold $\to$ invert $\to$ refold $\to$ search}
+  \begin{enumerate}
+    \item Fold the edited sequence (ESMFold2), gate on pLDDT/PAE.
+    \item Inverse-fold to propose compensatory candidates (ProteinMPNN),
+      MCMC search over the whole scaffold minus the fixed edit.
+    \item Score every candidate with three independent experts: \textbf{ESM2}
+      (sequence LM), \textbf{ProteinMPNN} (structure-conditioned),
+      \textbf{Evo2} (DNA-level, causal) --- combined into one MCMC objective.
+    \item Refold top candidates, self-consistency (TM-score) gate before
+      trusting anything downstream.
+  \end{enumerate}
+\end{frame}
+
+% ---------------------------------------------------------------------------
+\begin{frame}{Three legs of evidence, per candidate}
+  \begin{columns}
+    \begin{column}{0.33\textwidth}
+      \centering\textbf{Contact/energy}\\[0.3em]
+      \small Per-neighbor $\Delta$distance, $\Delta$contact energy,
+      $\Delta$pLDDT/PAE near every changed residue.
+    \end{column}
+    \begin{column}{0.33\textwidth}
+      \centering\textbf{SAE interpretability}\\[0.3em]
+      \small ESM-C sparse-autoencoder feature deltas across
+      WT / edit-only / compensated --- top-$k$ surfaced, not a full sweep.
+    \end{column}
+    \begin{column}{0.33\textwidth}
+      \centering\textbf{Agent explanation}\\[0.3em]
+      \small Grounded in the numeric deltas above --- flags itself if a
+      claimed rescue contradicts the numbers.
+    \end{column}
+  \end{columns}
+  \vspace{1em}
+  \centering\small
+  All three feed one plain-language explanation of \emph{whether and how}
+  a compensatory mutation rescues stability.
+\end{frame}
+
+% ---------------------------------------------------------------------------
+\begin{frame}{Live: candidate scores vs.\ WT}
+  \centering
+  % TODO screenshot: Results page -- chain starting/ending score histogram
+  \fbox{\parbox[c][6cm][c]{0.85\linewidth}{\centering\small
+    [screenshot: Results page,\\ chain starting/ending scores histogram + WT baseline]}}
+\end{frame}
+
+% ---------------------------------------------------------------------------
+\begin{frame}{Live: structure \& agent explanation}
+  \centering
+  % TODO screenshot: Structure viewer, top candidate, colored by SAE delta
+  \fbox{\parbox[c][6cm][c]{0.85\linewidth}{\centering\small
+    [screenshot: Structure viewer,\\ top candidate colored by SAE $\Delta\Delta$, agent explanation panel]}}
+\end{frame}
+
+% ---------------------------------------------------------------------------
+\begin{frame}{What's real vs.\ what's next}
+  \begin{columns}
+    \begin{column}{0.5\textwidth}
+      \textbf{Working end to end}
+      \begin{itemize}
+        \small
+        \item Fold/invert/refold + TM gate
+        \item 3-expert MCMC search (ESM2/PMPNN/Evo2)
+        \item Contact-energy + SAE diffs
+        \item Grounded agent explanation
+        \item Literature-annotation conflict check
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.5\textwidth}
+      \textbf{Next}
+      \begin{itemize}
+        \small
+        \item Wet-lab validation of motif accessibility
+        \item Insertion (not just substitution) edits
+        \item Oligo library export for synthesis
+        \item Broader scaffold library beyond lysozyme
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ---------------------------------------------------------------------------
+\begin{frame}
+  \centering
+  \Large\textbf{EpiGen}\\[0.3em]
+  \normalsize A selective antibiotic, and the agent that explains why it should still fold.\\[1.5em]
+  \small Questions?
+\end{frame}
+
+\end{document}

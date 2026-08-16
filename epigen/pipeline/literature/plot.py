@@ -23,6 +23,13 @@ WINDOW_COLOR = "#e8891a"
 CONFLICT_EDGE_COLOR = "#111111"
 BACKBONE_COLOR = "#c9c9c9"
 
+# UniProt feature_types whose start/end are two specific paired residues (e.g. a
+# disulfide's two cysteines), not a contiguous functional span -- a filled bar across
+# the whole range reads as "every residue in between is part of this," which is wrong
+# for these two. Drawn as a bracket (two end-cap ticks + a thin connecting line)
+# instead -- see the `is_bond` branch in plot_annotation_map below.
+BOND_FEATURE_TYPES = {"Disulfide bond", "Cross-link"}
+
 
 def plot_annotation_map(
     sequence_length: int,
@@ -94,13 +101,23 @@ def plot_annotation_map(
         color = FUNCTIONAL_COLOR if r.kind == "functional" else STRUCTURAL_COLOR
         is_conflict = id(r) in conflict_ids
         width = max(r.end - r.start + 1, sequence_length * 0.006)
-        ax.add_patch(
-            Rectangle(
-                (r.start, y), width, 0.6,
-                fc=color, ec=CONFLICT_EDGE_COLOR if is_conflict else "none",
-                lw=1.6 if is_conflict else 0, zorder=3,
+        if r.feature_type in BOND_FEATURE_TYPES and r.start != r.end:
+            # |----| bracket: two end-cap ticks at the paired residues, joined by a thin
+            # line -- not a filled Rectangle, which would visually claim every residue
+            # between r.start and r.end is part of the bond (see BOND_FEATURE_TYPES).
+            line_color = CONFLICT_EDGE_COLOR if is_conflict else color
+            lw = 2.0 if is_conflict else 1.6
+            ax.plot([r.start, r.end], [y + 0.3, y + 0.3], color=line_color, lw=lw, zorder=3)
+            for x in (r.start, r.end):
+                ax.plot([x, x], [y, y + 0.6], color=line_color, lw=lw, zorder=3)
+        else:
+            ax.add_patch(
+                Rectangle(
+                    (r.start, y), width, 0.6,
+                    fc=color, ec=CONFLICT_EDGE_COLOR if is_conflict else "none",
+                    lw=1.6 if is_conflict else 0, zorder=3,
+                )
             )
-        )
         ax.plot([r.start, r.start], [0.0, backbone_y - 0.3], color="#e6e6e6", lw=0.6, ls=(0, (2, 2)), zorder=1)
         prefix = "⚠ " if is_conflict else ""
         ax.text(r.start - sequence_length * 0.008, y + 0.3, f"{prefix}{r.label}", ha="right", va="center", fontsize=7.6)
